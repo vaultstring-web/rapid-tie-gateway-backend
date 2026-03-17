@@ -1,0 +1,695 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Users and Authentication
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  phone             String?   @unique
+  password          String
+  firstName         String?
+  lastName          String?
+  role              UserRole  @default(PUBLIC)
+  emailVerified     Boolean   @default(false)
+  phoneVerified     Boolean   @default(false)
+  twoFactorEnabled  Boolean   @default(false)
+  twoFactorSecret   String?
+  profileImage      String?
+  lastLoginAt       DateTime?
+  passwordChangedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  merchant       Merchant?
+  organizer      EventOrganizer?
+  employee       Employee?
+  approver       Approver?
+  financeOfficer FinanceOfficer?
+  admin          Admin?
+  sessions       Session[]
+  notifications  Notification[]
+  activityLogs   ActivityLog[]
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  token      String   @unique
+  deviceInfo String?
+  ipAddress  String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Merchant (E-commerce)
+model Merchant {
+  id               String        @id @default(cuid())
+  userId           String        @unique
+  businessName     String
+  businessRegNo    String?
+  businessType     String?
+  taxId            String?
+  website          String?
+  logo             String?
+  country          String        @default("Malawi")
+  city             String?
+  address          String?
+  status           AccountStatus @default(PENDING)
+  feePercentage    Float         @default(3.0)
+  settlementPeriod String        @default("daily")
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  // Relations
+  user         User              @relation(fields: [userId], references: [id])
+  apiKeys      ApiKey[]
+  webhooks     Webhook[]
+  paymentLinks PaymentLink[]
+  transactions Transaction[]
+  settlements  Settlement[]
+  products     Product[]
+  orders       Order[]
+  settings     MerchantSettings?
+}
+
+model MerchantSettings {
+  id               String   @id @default(cuid())
+  merchantId       String   @unique
+  checkoutBranding Json? // JSON for colors, logo placement
+  paymentMethods   Json? // Enabled payment methods
+  successUrl       String?
+  cancelUrl        String?
+  webhookSecret    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+}
+
+model ApiKey {
+  id          String    @id @default(cuid())
+  merchantId  String
+  name        String
+  key         String    @unique
+  lastUsed    DateTime?
+  expiresAt   DateTime?
+  permissions Json? // Array of permissions
+  createdAt   DateTime  @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+}
+
+model Webhook {
+  id         String   @id @default(cuid())
+  merchantId String
+  url        String
+  events     Json // Array of event types
+  secret     String
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  merchant   Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+}
+
+model WebhookDelivery {
+  id        String   @id @default(cuid())
+  webhookId String
+  event     String
+  payload   Json
+  response  Json?
+  status    String // success, failed
+  attempts  Int      @default(1)
+  createdAt DateTime @default(now())
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+}
+
+// Event Organizer
+model EventOrganizer {
+  id                String        @id @default(cuid())
+  userId            String        @unique
+  organizationName  String
+  organizationRegNo String?
+  organizationType  String?
+  contactPerson     String?
+  phone             String?
+  website           String?
+  logo              String?
+  status            AccountStatus @default(PENDING)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Relations
+  user         User          @relation(fields: [userId], references: [id])
+  events       Event[]
+  ticketSales  TicketSale[]
+  transactions Transaction[]
+  settlements  Settlement[]
+}
+
+model Event {
+  id               String      @id @default(cuid())
+  organizerId      String
+  name             String
+  description      String
+  shortDescription String?
+  category         String
+  type             String
+  venue            String
+  city             String
+  country          String      @default("Malawi")
+  startDate        DateTime
+  endDate          DateTime
+  timezone         String      @default("Africa/Blantyre")
+  coverImage       String?
+  images           Json?
+  capacity         Int?
+  status           EventStatus @default(DRAFT)
+  visibility       String      @default("public")
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  // Relations
+  organizer    EventOrganizer  @relation(fields: [organizerId], references: [id])
+  ticketTiers  TicketTier[]
+  tickets      Ticket[]
+  waitlist     WaitlistEntry[]
+  eventViews   EventView[]
+  ticketSales  TicketSale[]
+  paymentLinks PaymentLink[]
+}
+
+model TicketTier {
+  id             String    @id @default(cuid())
+  eventId        String
+  name           String // VIP, General, Early Bird
+  description    String?
+  price          Float
+  quantity       Int
+  sold           Int       @default(0)
+  maxPerCustomer Int?      @default(10)
+  startSale      DateTime?
+  endSale        DateTime?
+  rolePricing    Json? // Role-based pricing
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  event   Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  tickets Ticket[]
+}
+
+model Ticket {
+  id            String       @id @default(cuid())
+  eventId       String
+  tierId        String
+  orderId       String
+  attendeeName  String
+  attendeeEmail String
+  attendeePhone String?
+  qrCode        String       @unique
+  qrCodeData    String
+  status        TicketStatus @default(ACTIVE)
+  checkedInAt   DateTime?
+  checkedInBy   String?
+  createdAt     DateTime     @default(now())
+
+  event Event      @relation(fields: [eventId], references: [id])
+  tier  TicketTier @relation(fields: [tierId], references: [id])
+  order TicketSale @relation(fields: [orderId], references: [id])
+}
+
+model TicketSale {
+  id            String   @id @default(cuid())
+  organizerId   String
+  eventId       String
+  orderNumber   String   @unique
+  customerName  String
+  customerEmail String
+  customerPhone String?
+  totalAmount   Float
+  feeAmount     Float
+  netAmount     Float
+  status        String   @default("completed")
+  paymentMethod String
+  transactionId String?
+  createdAt     DateTime @default(now())
+
+  organizer EventOrganizer @relation(fields: [organizerId], references: [id])
+  event     Event          @relation(fields: [eventId], references: [id])
+  tickets   Ticket[]
+}
+
+model WaitlistEntry {
+  id        String   @id @default(cuid())
+  eventId   String
+  name      String
+  email     String
+  phone     String?
+  quantity  Int      @default(1)
+  notified  Boolean  @default(false)
+  converted Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+model EventView {
+  id        String   @id @default(cuid())
+  eventId   String
+  userId    String?
+  sessionId String?
+  viewedAt  DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+// DSA (Daily Subsistence Allowance)
+model Organization {
+  id              String        @id @default(cuid())
+  name            String
+  registrationNo  String?
+  type            String
+  sector          String?
+  address         String?
+  city            String?
+  country         String        @default("Malawi")
+  contactEmail    String
+  contactPhone    String
+  status          AccountStatus @default(PENDING)
+  budget          Float?
+  fiscalYearStart DateTime?
+  fiscalYearEnd   DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  departments     Department[]
+  employees       Employee[]
+  dsaRates        DsaRate[]
+  budgets         Budget[]
+  disbursements   DisbursementBatch[]
+  approvers       Approver[]
+  financeOfficers FinanceOfficer[]
+  dsaRequests     DsaRequest[]
+}
+
+model Department {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  code           String?
+  budget         Float?
+  managerId      String? // User ID of department manager
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employees    Employee[]
+  budgets      Budget[]
+}
+
+model Employee {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  organizationId String
+  departmentId   String?
+  employeeId     String   @unique
+  jobTitle       String
+  grade          String?
+  bankAccount    Json? // Encrypted bank details
+  mobileMoney    Json? // Encrypted mobile money details
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  department   Department?  @relation(fields: [departmentId], references: [id])
+  dsaRequests  DsaRequest[]
+}
+
+model Approver {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  organizationId String
+  approvalLevel  Int      @default(1)
+  maxAmount      Float? // Maximum amount they can approve
+  departments    Json? // Departments they can approve for
+  createdAt      DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  approvals    Approval[]
+}
+
+model FinanceOfficer {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  organizationId String
+  role           String // finance_officer, finance_manager, accountant
+  createdAt      DateTime @default(now())
+
+  user         User                @relation(fields: [userId], references: [id])
+  organization Organization        @relation(fields: [organizationId], references: [id])
+  batches      DisbursementBatch[]
+}
+
+model DsaRate {
+  id                String    @id @default(cuid())
+  organizationId    String
+  location          String
+  grade             String?
+  perDiemRate       Float
+  accommodationRate Float?
+  effectiveFrom     DateTime
+  effectiveTo       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model DsaRequest {
+  id                String    @id @default(cuid())
+  employeeId        String
+  organizationId    String
+  requestNumber     String    @unique
+  destination       String
+  purpose           String
+  startDate         DateTime
+  endDate           DateTime
+  duration          Int // Calculated days
+  perDiemRate       Float
+  accommodationRate Float?
+  totalAmount       Float
+  currency          String    @default("MWK")
+  status            DsaStatus @default(PENDING)
+  travelAuthRef     String?
+  notes             String?
+  submittedAt       DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  employee         Employee          @relation(fields: [employeeId], references: [id])
+  organization     Organization      @relation(fields: [organizationId], references: [id])
+  approvals        Approval[]
+  disbursementItem DisbursementItem?
+}
+
+model Approval {
+  id         String    @id @default(cuid())
+  requestId  String
+  approverId String
+  level      Int
+  status     String // approved, rejected, pending
+  comments   String?
+  approvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  request  DsaRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  approver Approver   @relation(fields: [approverId], references: [id])
+}
+
+model Budget {
+  id             String   @id @default(cuid())
+  organizationId String
+  departmentId   String?
+  fiscalYear     String
+  allocated      Float
+  spent          Float    @default(0)
+  committed      Float    @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  department   Department?  @relation(fields: [departmentId], references: [id])
+}
+
+model DisbursementBatch {
+  id               String    @id @default(cuid())
+  organizationId   String
+  financeOfficerId String
+  batchNumber      String    @unique
+  totalAmount      Float
+  itemCount        Int
+  status           String // pending, processing, completed, failed
+  metadata         Json?
+  processedAt      DateTime?
+  createdAt        DateTime  @default(now())
+
+  organization   Organization       @relation(fields: [organizationId], references: [id])
+  financeOfficer FinanceOfficer     @relation(fields: [financeOfficerId], references: [id])
+  items          DisbursementItem[]
+}
+
+model DisbursementItem {
+  id               String    @id @default(cuid())
+  batchId          String
+  requestId        String    @unique
+  recipientName    String
+  recipientPhone   String?
+  recipientAccount String?
+  amount           Float
+  paymentMethod    String // airtel, mpamba, bank
+  status           String // pending, success, failed
+  providerRef      String?
+  errorMessage     String?
+  retryCount       Int       @default(0)
+  processedAt      DateTime?
+  createdAt        DateTime  @default(now())
+
+  batch   DisbursementBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  request DsaRequest        @relation(fields: [requestId], references: [id])
+}
+
+// Payments & Transactions
+model Transaction {
+  id             String   @id @default(cuid())
+  merchantId     String?
+  organizerId    String?
+  orderId        String?
+  transactionRef String   @unique
+  amount         Float
+  fee            Float    @default(0)
+  netAmount      Float
+  currency       String   @default("MWK")
+  status         String // pending, success, failed, refunded
+  paymentMethod  String
+  provider       String? // airtel, mpamba, bank, card
+  providerRef    String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  merchant  Merchant?       @relation(fields: [merchantId], references: [id])
+  organizer EventOrganizer? @relation(fields: [organizerId], references: [id])
+  refunds   Refund[]
+  auditLogs AuditLog[]
+}
+
+model PaymentLink {
+  id          String    @id @default(cuid())
+  merchantId  String
+  eventId     String?
+  title       String
+  description String?
+  amount      Float?
+  currency    String    @default("MWK")
+  linkToken   String    @unique
+  linkUrl     String    @unique
+  views       Int       @default(0)
+  conversions Int       @default(0)
+  singleUse   Boolean   @default(false)
+  expiresAt   DateTime?
+  active      Boolean   @default(true)
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+  event    Event?   @relation(fields: [eventId], references: [id])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  merchantId  String
+  name        String
+  description String?
+  price       Float
+  currency    String   @default("MWK")
+  sku         String?
+  inventory   Int?
+  image       String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  merchant   Merchant    @relation(fields: [merchantId], references: [id])
+  orderItems OrderItem[]
+}
+
+model Order {
+  id              String   @id @default(cuid())
+  merchantId      String
+  orderNumber     String   @unique
+  customerName    String
+  customerEmail   String
+  customerPhone   String?
+  totalAmount     Float
+  status          String // pending, paid, processing, shipped, delivered
+  shippingAddress Json?
+  notes           String?
+  transactionId   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  merchant Merchant    @relation(fields: [merchantId], references: [id])
+  items    OrderItem[]
+}
+
+model OrderItem {
+  id        String @id @default(cuid())
+  orderId   String
+  productId String
+  quantity  Int
+  price     Float
+  total     Float
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model Settlement {
+  id               String    @id @default(cuid())
+  merchantId       String?
+  organizerId      String?
+  settlementRef    String    @unique
+  periodStart      DateTime
+  periodEnd        DateTime
+  grossAmount      Float
+  feeAmount        Float
+  netAmount        Float
+  transactionCount Int
+  status           String // pending, processing, completed
+  bankReference    String?
+  settledAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  merchant  Merchant?       @relation(fields: [merchantId], references: [id])
+  organizer EventOrganizer? @relation(fields: [organizerId], references: [id])
+}
+
+model Refund {
+  id            String   @id @default(cuid())
+  transactionId String
+  amount        Float
+  reason        String?
+  status        String // pending, completed, failed
+  providerRef   String?
+  createdAt     DateTime @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+}
+
+// Admin
+model Admin {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  role        String // super_admin, support, compliance
+  permissions Json?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// Notifications & Logs
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  data      Json?
+  read      Boolean   @default(false)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  entity    String?
+  entityId  String?
+  oldValue  Json?
+  newValue  Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  transactionId String?
+  userId        String?
+  action        String
+  status        String
+  details       Json?
+  ipAddress     String?
+  createdAt     DateTime @default(now())
+
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+}
+
+// Enums
+enum UserRole {
+  PUBLIC
+  MERCHANT
+  ORGANIZER
+  EMPLOYEE
+  APPROVER
+  FINANCE_OFFICER
+  ADMIN
+  COMPLIANCE
+}
+
+enum AccountStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+  COMPLETED
+}
+
+enum TicketStatus {
+  ACTIVE
+  USED
+  EXPIRED
+  REFUNDED
+  CANCELLED
+}
+
+enum DsaStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+  CANCELLED
+}
