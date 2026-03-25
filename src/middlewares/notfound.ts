@@ -1,5 +1,7 @@
+// src/middlewares/notFound.ts
 import { Request, Response, NextFunction } from 'express';
+import { AppError } from '../utils/errorHandler';
 
-export const notFound = (req: Request, res: Response, next: NextFunction) => {
-  res.status(404).json({ success: false, message: `Route not found: ${req.originalUrl}` });
+export const notfound = (req: Request, _res: Response, next: NextFunction) => {
+  next(new AppError(`Route not found - ${req.originalUrl}`, 404));
 };

@@ -26,8 +26,8 @@ import paymentRoutes from './routes/payment.routes';
 import webhookRoutes from './routes/webhook.routes';
 
 // Import middleware
-import { errorHandler } from './middlewares/errorHandler';
-import { notFound } from './middlewares/notFound';
+import { errorHandler } from './utils/errorHandler';
+import { notfound } from './middlewares/notfound';
 import { logger } from './utils/logger';
 
 // Initialize Express
@@ -89,7 +89,7 @@ app.use('/api/events', eventRoutes);
  app.use('/api/payments', paymentRoutes);
 app.use('/api/webhooks', webhookRoutes);
 // Error handling
-app.use(notFound);
+app.use(notfound);
 app.use(errorHandler);
 
 // Socket.IO connection handling

@@ -1,8 +1,8 @@
 import { Router } from 'express';
 
-const router = Router();
+const router: Router = Router();
 
-router.get('/test', (req, res) => {
+router.get('/test', (_req, res) => {
   res.json({ message: 'Admin route working!' });
 });
 

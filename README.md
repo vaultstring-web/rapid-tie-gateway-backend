@@ -74,13 +74,7 @@ CREATE DATABASE rapid_tie_db;
 
 4. DOCKER SETUP
  # Run PostgreSQL container
-docker run -d \
-  --name rapid-tie-postgres \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=rapid_tie_db \
-  -p 5432:5432 \
-  postgres:15
+docker run -d --name rapid-tie-postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=rapid_tie_db -p 5432:5432 postgres:15
 
 # Run Redis container
 docker run -d  --name rapid-tie-redis -p 6379:6379  redis:7
@@ -171,7 +165,7 @@ npm start
 1. Test API Health
 
 # Using curl
-curl http://localhost:3001/health
+curl.exe http://localhost:3001/health
 
 # Expected response:
 {
@@ -190,9 +184,7 @@ npx prisma studio
 3. TEST AUTHENTICATION
 bash
 # Try to login with demo credentials
-curl -X POST http://localhost:3001/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"merchant@example.com","password":"Merchant@123"}'
+Invoke-RestMethod -Uri "http://localhost:3001/api/auth/login" -Method POST -ContentType "application/json" -Body '{"email":"merchant@example.com","password":"Merchant@123"'
 
 # Should return success with user data and tokens
 

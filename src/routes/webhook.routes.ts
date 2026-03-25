@@ -1,8 +1,8 @@
 import { Router } from 'express';
 
-const router = Router();
+const router: Router = Router();
 
-router.post('/test', (req, res) => {
+router.post('/test', (_req, res) => {
   res.json({ message: 'Webhook route working!' });
 });
 

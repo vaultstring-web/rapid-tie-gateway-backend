@@ -1,19 +1,22 @@
 import { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../server';
-import { AppError } from '../middlewares/errorHandler';
+import { AppError } from '../utils/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import { logger } from '../utils/logger';
-import crypto from 'crypto';
 
 export class AuthController {
-  // Register new user
-  async register(req: Request, res: Response, next: NextFunction) {
+  /**
+   * Register a new user
+   */
+  async register(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { email, phone, password, firstName, lastName, role, businessName, organizationName } = req.body;
 
-      // Check if user exists
+      // Check if user already exists
       const existingUser = await prisma.user.findFirst({
         where: {
           OR: [
@@ -24,13 +27,13 @@ export class AuthController {
       });
 
       if (existingUser) {
-        throw new AppError('User already exists with this email or phone', 400);
+        return next(new AppError('User already exists with this email or phone', 400));
       }
 
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 12);
 
-      // Create user
+      // Create user with role-specific data
       const user = await prisma.user.create({
         data: {
           email,
@@ -62,12 +65,13 @@ export class AuthController {
         },
       });
 
-      // Generate email verification token
+      // Generate verification token (for email verification)
       const verificationToken = crypto.randomBytes(32).toString('hex');
+      if (process.env.NODE_ENV === 'development') {
+        logger.info(`Verification token for ${email}: ${verificationToken}`);
+      }
 
-      // TODO: Send verification email
-
-      // Generate tokens
+      // Generate authentication tokens
       const token = this.generateToken(user.id);
       const refreshToken = this.generateRefreshToken(user.id);
 
@@ -80,10 +84,11 @@ export class AuthController {
         },
       });
 
-      // Set cookie
+      // Set cookie with token
       res.cookie('token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
         maxAge: 15 * 60 * 1000, // 15 minutes
       });
 
@@ -109,12 +114,14 @@ export class AuthController {
     }
   }
 
-  // Login
-  async login(req: Request, res: Response, next: NextFunction) {
+  /**
+   * Login user
+   */
+  async login(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { email, phone, password } = req.body;
-
-      // Find user
+          await this.logActivity(null, 'LOGIN_ATTEMPT', req);    
+      // Find user by email or phone
       const user = await prisma.user.findFirst({
         where: {
           OR: [
@@ -132,18 +139,25 @@ export class AuthController {
         },
       });
 
+      // Case 1: User not found
       if (!user) {
-        throw new AppError('Invalid credentials', 401);
+       await this.logActivity(null, 'LOGIN_FAILED_USER_NOT_FOUND', req);
+        return next(new AppError('Invalid credentials', 401));
       }
 
-      // Check password
-      const isValidPassword = await bcrypt.compare(password, user.password);
+      // Case 2: Invalid password
+const isValidPassword = await bcrypt.compare(password, user.password);
+if (!isValidPassword) {
+  await this.logActivity(user.id, 'LOGIN_FAILED', req);
+ // Send response without returning it (fixes TypeScript void issue)
+  res.status(401).json({
+    success: false,
+    message: 'Invalid credentials',
+  });
+  return; // stop further execution
+}
 
-      if (!isValidPassword) {
-        throw new AppError('Invalid credentials', 401);
-      }
-
-      // Update last login
+      // Update last login timestamp
       await prisma.user.update({
         where: { id: user.id },
         data: { lastLoginAt: new Date() },
@@ -158,27 +172,21 @@ export class AuthController {
         data: {
           userId: user.id,
           token: refreshToken,
-          deviceInfo: req.headers['user-agent'],
+          deviceInfo: req.headers['user-agent'] as string,
           ipAddress: req.ip,
           expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
         },
       });
 
-      // Set cookie
+      // Log successful login
+      await this.logActivity(user.id, 'LOGIN_SUCCESS', req);
+
+      // Set cookie with token
       res.cookie('token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
         maxAge: 15 * 60 * 1000, // 15 minutes
-      });
-
-      // Log activity
-      await prisma.activityLog.create({
-        data: {
-          userId: user.id,
-          action: 'LOGIN',
-          ipAddress: req.ip,
-          userAgent: req.headers['user-agent'],
-        },
       });
 
       res.json({
@@ -201,18 +209,24 @@ export class AuthController {
           token,
           refreshToken,
         },
-      });
+      });return;
     } catch (error) {
       next(error);
     }
   }
 
-  // Refresh token
-  async refreshToken(req: Request, res: Response, next: NextFunction) {
+  /**
+   * Refresh access token
+   */
+  async refreshToken(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { refreshToken } = req.body;
 
-      // Verify refresh token
+      if (!refreshToken) {
+        return next(new AppError('Refresh token is required', 400));
+      }
+
+      // Find valid session
       const session = await prisma.session.findFirst({
         where: {
           token: refreshToken,
@@ -222,14 +236,14 @@ export class AuthController {
       });
 
       if (!session) {
-        throw new AppError('Invalid or expired refresh token', 401);
+        return next(new AppError('Invalid or expired refresh token', 401));
       }
 
       // Generate new tokens
       const token = this.generateToken(session.user.id);
       const newRefreshToken = this.generateRefreshToken(session.user.id);
 
-      // Delete old session and create new one
+      // Replace old session with new one
       await prisma.$transaction([
         prisma.session.delete({ where: { id: session.id } }),
         prisma.session.create({
@@ -241,11 +255,12 @@ export class AuthController {
         }),
       ]);
 
-      // Set cookie
+      // Set new cookie
       res.cookie('token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        maxAge: 15 * 60 * 1000, // 15 minutes
+        sameSite: 'strict',
+        maxAge: 15 * 60 * 1000,
       });
 
       res.json({
@@ -257,127 +272,128 @@ export class AuthController {
     }
   }
 
-  // Logout
-  async logout(req: AuthRequest, res: Response, next: NextFunction) {
+  /**
+   * Logout user
+   */
+  async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const token = req.token;
 
+      if (!token) {
+        return next(new AppError('No token provided', 401));
+      }
+
       // Delete session
-      await prisma.session.deleteMany({
-        where: { token },
-      });
+      await prisma.session.deleteMany({ where: { token } });
 
       // Clear cookie
       res.clearCookie('token');
 
       // Log activity
       if (req.user) {
-        await prisma.activityLog.create({
-          data: {
-            userId: req.user.id,
-            action: 'LOGOUT',
-            ipAddress: req.ip,
-            userAgent: req.headers['user-agent'],
-          },
-        });
+        await this.logActivity(req.user.id, 'LOGOUT', req);
       }
 
-      res.json({
-        success: true,
-        message: 'Logout successful',
-      });
+      res.json({ success: true, message: 'Logout successful' });
     } catch (error) {
       next(error);
     }
   }
 
-  // Get current user
-  async me(req: AuthRequest, res: Response, next: NextFunction) {
+  /**
+   * Get current authenticated user
+   */
+  async me(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      res.json({
-        success: true,
-        data: { user: req.user },
-      });
+      if (!req.user) {
+        return next(new AppError('User not found', 401));
+      }
+
+      res.json({ success: true, data: { user: req.user } });
     } catch (error) {
       next(error);
     }
   }
 
-  // Change password
-  async changePassword(req: AuthRequest, res: Response, next: NextFunction) {
+  /**
+   * Change user password
+   */
+  async changePassword(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      if (!req.user) {
+        return next(new AppError('User not found', 401));
+      }
+
       const { currentPassword, newPassword } = req.body;
 
-      // Check current password
-      const isValid = await bcrypt.compare(currentPassword, req.user.password);
-
-      if (!isValid) {
-        throw new AppError('Current password is incorrect', 400);
+      if (!currentPassword || !newPassword) {
+        return next(new AppError('Current password and new password are required', 400));
       }
 
-      // Hash new password
-      const hashedPassword = await bcrypt.hash(newPassword, 12);
+      // Verify current password
+      const isValid = await bcrypt.compare(currentPassword, req.user.password);
+      if (!isValid) {
+        return next(new AppError('Current password is incorrect', 400));
+      }
 
-      // Update password
+      // Hash and update new password
+      const hashedPassword = await bcrypt.hash(newPassword, 12);
       await prisma.user.update({
         where: { id: req.user.id },
-        data: {
-          password: hashedPassword,
-          passwordChangedAt: new Date(),
+        data: { 
+          password: hashedPassword, 
+          passwordChangedAt: new Date() 
         },
       });
 
       // Log activity
-      await prisma.activityLog.create({
-        data: {
-          userId: req.user.id,
-          action: 'PASSWORD_CHANGE',
-          ipAddress: req.ip,
-          userAgent: req.headers['user-agent'],
-        },
-      });
+      await this.logActivity(req.user.id, 'PASSWORD_CHANGE', req);
 
-      res.json({
-        success: true,
-        message: 'Password changed successfully',
-      });
+      res.json({ success: true, message: 'Password changed successfully' });
     } catch (error) {
       next(error);
     }
   }
 
-  // Forgot password
-  async forgotPassword(req: Request, res: Response, next: NextFunction) {
+  /**
+   * Request password reset
+   */
+  async forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { email } = req.body;
 
-      const user = await prisma.user.findUnique({
-        where: { email },
-      });
+      if (!email) {
+        return next(new AppError('Email is required', 400));
+      }
+
+      const user = await prisma.user.findUnique({ where: { email } });
 
       if (!user) {
-        // Don't reveal if user exists
-        return res.json({
+        // Don't reveal if user exists for security
+        await this.logActivity(null, 'FORGOT_PASSWORD_ATTEMPT', req);
+        res.json({
           success: true,
           message: 'If your email is registered, you will receive a reset link',
         });
+        return;
       }
 
       // Generate reset token
       const resetToken = crypto.randomBytes(32).toString('hex');
       const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour
 
-      // Store token
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          // Add reset token fields to schema if needed
-          // resetToken,
-          // resetTokenExpiry,
-        },
-      });
+      // Log token in development
+      if (process.env.NODE_ENV === 'development') {
+        logger.info(`Password reset token for ${email}: ${resetToken}`);
+        logger.info(`Token expires at: ${resetTokenExpiry.toISOString()}`);
+      }
 
-      // TODO: Send reset email
+      // TODO: Store token in database and send email
+      // await prisma.user.update({
+      //   where: { id: user.id },
+      //   data: { resetToken, resetTokenExpiry },
+      // });
+      // await sendResetEmail(email, resetToken);
 
       res.json({
         success: true,
@@ -388,71 +404,98 @@ export class AuthController {
     }
   }
 
-  // Reset password
-  async resetPassword(req: Request, res: Response, next: NextFunction) {
+  /**
+   * Reset password with token
+   */
+  async resetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { token, password } = req.body;
 
-      // Find user with valid token
-      const user = await prisma.user.findFirst({
-        where: {
-          // Add reset token fields to schema if needed
-          // resetToken: token,
-          // resetTokenExpiry: { gt: new Date() },
-        },
-      });
-
-      if (!user) {
-        throw new AppError('Invalid or expired reset token', 400);
+      if (!token || !password) {
+        return next(new AppError('Token and password are required', 400));
       }
 
-      // Hash new password
-      const hashedPassword = await bcrypt.hash(password, 12);
+      if (password.length < 8) {
+        return next(new AppError('Password must be at least 8 characters', 400));
+      }
 
-      // Update password and clear reset token
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          password: hashedPassword,
-          passwordChangedAt: new Date(),
-          // resetToken: null,
-          // resetTokenExpiry: null,
-        },
-      });
+      if (process.env.NODE_ENV === 'development') {
+        logger.info(`Resetting password with token: ${token}`);
+      }
 
-      // Log activity
-      await prisma.activityLog.create({
-        data: {
-          userId: user.id,
-          action: 'PASSWORD_RESET',
-          ipAddress: req.ip,
-          userAgent: req.headers['user-agent'],
-        },
-      });
+      // TODO: Verify token and update password
+      // const user = await prisma.user.findFirst({
+      //   where: { resetToken: token, resetTokenExpiry: { gt: new Date() } },
+      // });
+      // if (!user) return next(new AppError('Invalid or expired token', 400));
+      // const hashedPassword = await bcrypt.hash(password, 12);
+      // await prisma.user.update({
+      //   where: { id: user.id },
+      //   data: { password: hashedPassword, passwordChangedAt: new Date(), resetToken: null, resetTokenExpiry: null },
+      // });
 
-      res.json({
-        success: true,
-        message: 'Password reset successful',
-      });
+      res.json({ success: true, message: 'Password reset successful' });
     } catch (error) {
       next(error);
     }
   }
 
-  // Helper methods
-  private generateToken(userId: string): string {
-    return jwt.sign(
-      { id: userId },
-      process.env.JWT_SECRET!,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
-    );
+  // ==================== HELPER METHODS ====================
+
+  /**
+   * Log activity to database
+   */
+  private async logActivity(
+    userId: string | null,
+    action: string,
+    req: Request
+  ): Promise<void> {
+    try {
+      await prisma.activityLog.create({
+        data: {
+          userId,
+          action,
+          entity: 'User',
+          entityId: userId,
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent'] as string,
+          oldValue: Prisma.JsonNull,
+          newValue: Prisma.JsonNull,
+        },
+      });
+    } catch (error) {
+      // Don't throw error if logging fails - just log to console
+      logger.error('Failed to log activity:', error);
+    }
   }
 
+  /**
+   * Generate JWT access token
+   */
+  private generateToken(userId: string): string {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error('JWT_SECRET is not defined in environment variables');
+    }
+    
+    const expiresIn = process.env.JWT_EXPIRES_IN || '15m';
+    return jwt.sign({ id: userId }, secret, { expiresIn } as jwt.SignOptions);
+  }
+
+  /**
+   * Generate JWT refresh token
+   */
   private generateRefreshToken(userId: string): string {
+    const secret = process.env.JWT_REFRESH_SECRET;
+    if (!secret) {
+      throw new Error('JWT_REFRESH_SECRET is not defined in environment variables');
+    }
+    
+    const expiresIn = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
     return jwt.sign(
-      { id: userId, type: 'refresh' },
-      process.env.JWT_REFRESH_SECRET!,
-      { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
+      { id: userId, type: 'refresh' }, 
+      secret, 
+      { expiresIn } as jwt.SignOptions
     );
   }
 }

@@ -6,7 +6,7 @@ const port = 3001;
 
 app.use('/api/merchant', merchantRoutes);
 
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({ status: 'OK', message: 'Test server working!' });
 });
 
