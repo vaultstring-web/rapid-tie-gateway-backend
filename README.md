@@ -246,3 +246,125 @@ pnpm run prisma:migrate	Run database migrations
 pnpm run prisma:studio	Open Prisma Studio
 pnpm run db:seed	Seed database
 pnpm run db:reset	Reset database (caution)
+
+
+### ✅ Backend Authentication AND back-end event Ticketing Platform
+
+### Test Endpoints
+
+#### Backend Auth
+- Login: `POST /api/auth/login`
+- Register: `POST /api/auth/register`
+- Password Reset: `POST /api/auth/forgot-password` and `POST /api/auth/reset-password`
+- Email Verification: `POST /api/auth/verify-email`
+- 2FA Verification: `POST /api/auth/2fa/verify`
+
+#### Organizer Module
+- Get Dashboard: `GET /api/organizer/events`
+- Create Event: `POST /api/organizer/events`
+- Update Event: `PUT /api/organizer/events/:id`
+
+Headers for authorized requests:
+```bash
+Authorization: Bearer TOKEN
+```
+
+#### 1. Create Event
+```bash
+POST /api/organizer/events
+```
+Implemented:
+- Organizer authentication check  
+- Event data validation  
+- Prisma event creation  
+- Event visibility: public / merchant-only / all-platform  
+- Error handling using AppError  
+- Return created event ID
+
+#### 2. Update Event
+```bash
+PUT /api/organizer/events/:id
+```
+Implemented:
+- Update event fields  
+- Validate organizer ownership  
+- Track cross-platform engagement metrics  
+- Validate status transitions  
+- Log all changes  
+- Authorization protection  
+- Input validation
+
+#### 3. Organizer Dashboard
+```bash
+GET /api/organizer/events
+```
+Implemented:
+- Return upcoming and past events  
+- Calculate total tickets and revenue  
+- Cross-platform visibility stats  
+- Views by merchants and DSA employees  
+- Structure ready for caching
+
+---
+
+### How Team Should Use These Endpoints
+
+#### Get Organizer Dashboard
+```bash
+GET /api/organizer/events
+```
+Headers:
+```bash
+Authorization: Bearer TOKEN
+```
+Returns: upcoming events, past events, total tickets, revenue, cross-platform stats
+
+#### Create Event
+```bash
+POST /api/organizer/events
+```
+Example Body:
+```json
+{
+  "title": "Tech Conference",
+  "description": "Annual tech conference",
+  "startDate": "2026-04-10",
+  "endDate": "2026-04-11",
+  "location": "Lilongwe",
+  "visibility": "public"
+}
+```
+Visibility: public / merchant-only / all-platform
+
+#### Update Event
+```bash
+PUT /api/organizer/events/:id
+```
+Supports: updating fields, status, engagement tracking  
+Validation: must own event, organizer-only, status transitions enforced
+
+---
+
+---
+
+### Notes
+All organizer routes require:
+```bash
+Authorization: Bearer TOKEN
+```
+Only users with **organizer role** can access these endpoints.
+
+---
+
+## 🧪 API Testing (Thunder Client)
+
+The Organizer and Auth endpoints were tested using Thunder Client in VS Code.
+
+### Steps to Test
+1. Open Thunder Client  
+2. Create new request  
+3. Select method (GET / POST / PUT)  
+4. Enter endpoint URL  
+5. Add Authorization header if required  
+6. Send request
+
