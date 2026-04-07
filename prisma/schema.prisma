@@ -20,11 +20,19 @@ model User {
   phoneVerified     Boolean   @default(false)
   twoFactorEnabled  Boolean   @default(false)
   twoFactorSecret   String?
+  twoFactorBackupCodes String[] @default([])
+  trustedDevices       Json?
   profileImage      String?
   lastLoginAt       DateTime?
   passwordChangedAt DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  resetToken           String?  
+  resetTokenExpiry     DateTime?
+  passwordResetAt    DateTime?
+  verificationToken String?   @unique
+  verificationTokenExpiry DateTime?
+ 
 
   // Relations
   merchant       Merchant?
@@ -167,6 +175,7 @@ model Event {
   type             String
   venue            String
   city             String
+  amount           Float       @default(0)
   country          String      @default("Malawi")
   startDate        DateTime
   endDate          DateTime
@@ -650,6 +659,7 @@ model AuditLog {
 
   transaction Transaction? @relation(fields: [transactionId], references: [id])
 }
+
 
 // Enums
 enum UserRole {

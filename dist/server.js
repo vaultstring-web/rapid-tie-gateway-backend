@@ -26,8 +26,8 @@ const admin_routes_1 = __importDefault(require("./routes/admin.routes"));
 const event_routes_1 = __importDefault(require("./routes/event.routes"));
 const payment_routes_1 = __importDefault(require("./routes/payment.routes"));
 const webhook_routes_1 = __importDefault(require("./routes/webhook.routes"));
-const errorHandler_1 = require("./middlewares/errorHandler");
-const notFound_1 = require("./middlewares/notFound");
+const errorHandler_1 = require("./utils/errorHandler");
+const notfound_1 = require("./middlewares/notfound");
 const logger_1 = require("./utils/logger");
 const app = (0, express_1.default)();
 const httpServer = (0, http_1.createServer)(app);
@@ -56,7 +56,7 @@ app.use(express_1.default.urlencoded({ extended: true, limit: '10mb' }));
 app.use((0, cookie_parser_1.default)());
 app.use('/api', limiter);
 app.use('/uploads', express_1.default.static('uploads'));
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
     res.json({
         status: 'OK',
         timestamp: new Date().toISOString(),
@@ -75,6 +75,8 @@ app.use('/api/admin', admin_routes_1.default);
 app.use('/api/events', event_routes_1.default);
 app.use('/api/payments', payment_routes_1.default);
 app.use('/api/webhooks', webhook_routes_1.default);
+app.use(notfound_1.notfound);
+app.use(errorHandler_1.errorHandler);
 io.on('connection', (socket) => {
     logger_1.logger.info(`Client connected: ${socket.id}`);
     socket.on('authenticate', (token) => {
@@ -84,8 +86,6 @@ io.on('connection', (socket) => {
         logger_1.logger.info(`Client disconnected: ${socket.id}`);
     });
 });
-app.use(notFound_1.notFound);
-app.use(errorHandler_1.errorHandler);
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
     logger_1.logger.info(`

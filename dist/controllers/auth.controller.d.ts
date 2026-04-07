@@ -7,8 +7,9 @@ export declare class AuthController {
     logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>;
     me(req: AuthRequest, res: Response, next: NextFunction): Promise<void>;
     changePassword(req: AuthRequest, res: Response, next: NextFunction): Promise<void>;
-    forgotPassword(req: Request, res: Response, next: NextFunction): Promise<Response<any, Record<string, any>> | undefined>;
+    forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void>;
     resetPassword(req: Request, res: Response, next: NextFunction): Promise<void>;
+    private logActivity;
     private generateToken;
     private generateRefreshToken;
 }

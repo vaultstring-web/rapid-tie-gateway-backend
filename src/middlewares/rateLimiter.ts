@@ -10,3 +10,13 @@ export const loginRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+export const forgotPasswordLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3,
+  message: {
+    success: false,
+    message: 'Too many password reset requests. Try again after 1 hour.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

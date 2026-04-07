@@ -1,34 +1,15 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.logger = void 0;
-const winston_1 = __importDefault(require("winston"));
-const path_1 = __importDefault(require("path"));
-const logDir = 'logs';
-const colors = {
-    error: 'red',
-    warn: 'yellow',
-    info: 'green',
-    http: 'magenta',
-    debug: 'white',
+exports.logger = {
+    info: (message) => console.log(`[INFO] ${message}`),
+    error: (message, error) => {
+        console.error(`[ERROR] ${message}`);
+        if (error) {
+            console.error(error);
+        }
+    },
+    warn: (message) => console.warn(`[WARN] ${message}`),
+    debug: (message) => console.debug(`[DEBUG] ${message}`),
 };
-winston_1.default.addColors(colors);
-const format = winston_1.default.format.combine(winston_1.default.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss:ms' }), winston_1.default.format.colorize({ all: true }), winston_1.default.format.printf((info) => `${info.timestamp} ${info.level}: ${info.message}`));
-const transports = [
-    new winston_1.default.transports.Console(),
-    new winston_1.default.transports.File({
-        filename: path_1.default.join(logDir, 'error.log'),
-        level: 'error',
-    }),
-    new winston_1.default.transports.File({
-        filename: path_1.default.join(logDir, 'combined.log'),
-    }),
-];
-exports.logger = winston_1.default.createLogger({
-    level: process.env.LOG_LEVEL || 'info',
-    format,
-    transports,
-});
 //# sourceMappingURL=logger.js.map

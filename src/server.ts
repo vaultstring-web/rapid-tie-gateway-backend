@@ -9,7 +9,6 @@ import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { PrismaClient } from '@prisma/client';
-
 // Load environment variables
 dotenv.config();
 
@@ -86,8 +85,9 @@ app.use('/api/approver', approverRoutes);
 app.use('/api/finance', financeRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/events', eventRoutes);
- app.use('/api/payments', paymentRoutes);
+app.use('/api/payments', paymentRoutes);
 app.use('/api/webhooks', webhookRoutes);
+app.use('/api/organizer', organizerRoutes);
 // Error handling
 app.use(notfound);
 app.use(errorHandler);
