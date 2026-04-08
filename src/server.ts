@@ -84,10 +84,11 @@ app.use('/api/employee', employeeRoutes);
 app.use('/api/approver', approverRoutes);
 app.use('/api/finance', financeRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/events', eventRoutes);
+app.use('/api/public', eventRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/organizer', organizerRoutes);
+app.use('/api/events', eventRoutes);
 // Error handling
 app.use(notfound);
 app.use(errorHandler);

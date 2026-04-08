@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import { OrganizerController } from '../controllers/organizer.controller';
 import { authenticate, authorize } from '../middlewares/auth';
+import { createTicketTier } from "../controllers/ticketTier.controller";
 
 const router = Router();
 const organizerController = new OrganizerController();
@@ -29,4 +30,9 @@ router.put(
 (req, res, next) => organizerController.updateEvent(req, res, next)
 );
 
+// CREATE ticket tier
+router.post(
+  "/events/:id/tiers",
+  createTicketTier
+);
 export default router;
