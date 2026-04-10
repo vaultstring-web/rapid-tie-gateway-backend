@@ -92,8 +92,8 @@ model Merchant {
 model MerchantSettings {
   id               String   @id @default(cuid())
   merchantId       String   @unique
-  checkoutBranding Json? // JSON for colors, logo placement
-  paymentMethods   Json? // Enabled payment methods
+  checkoutBranding Json?
+  paymentMethods   Json?
   successUrl       String?
   cancelUrl        String?
   webhookSecret    String?
@@ -110,7 +110,7 @@ model ApiKey {
   key         String    @unique
   lastUsed    DateTime?
   expiresAt   DateTime?
-  permissions Json? // Array of permissions
+  permissions Json?
   createdAt   DateTime  @default(now())
 
   merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
@@ -120,7 +120,7 @@ model Webhook {
   id         String   @id @default(cuid())
   merchantId String
   url        String
-  events     Json // Array of event types
+  events     Json
   secret     String
   active     Boolean  @default(true)
   createdAt  DateTime @default(now())
@@ -135,7 +135,7 @@ model WebhookDelivery {
   event     String
   payload   Json
   response  Json?
-  status    String // success, failed
+  status    String
   attempts  Int      @default(1)
   createdAt DateTime @default(now())
 
@@ -165,6 +165,39 @@ model EventOrganizer {
   settlements  Settlement[]
 }
 
+// PAYMENT MODELS - MUST BE DEFINED BEFORE Event, TicketTier, TicketSale
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  EXPIRED
+  REFUNDED
+}
+
+model PaymentSession {
+  id            String        @id @default(cuid())
+  sessionToken  String        @unique
+  eventId       String
+  tierId        String
+  quantity      Int
+  totalAmount   Float
+  currency      String        @default("MWK")
+  status        PaymentStatus @default(PENDING)
+  paymentMethod String?
+  paymentRef    String?
+  orderId       String?
+  metadata      Json?
+  expiresAt     DateTime
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  event Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  tier  TicketTier   @relation(fields: [tierId], references: [id], onDelete: Cascade)
+  order TicketSale?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+}
+
+// Event Model
 model Event {
   id               String      @id @default(cuid())
   organizerId      String
@@ -196,12 +229,14 @@ model Event {
   eventViews   EventView[]
   ticketSales  TicketSale[]
   paymentLinks PaymentLink[]
+  paymentSessions PaymentSession[]
 }
 
+// Ticket Tier Model
 model TicketTier {
   id             String    @id @default(cuid())
   eventId        String
-  name           String // VIP, General, Early Bird
+  name           String
   description    String?
   price          Float
   quantity       Int
@@ -209,14 +244,16 @@ model TicketTier {
   maxPerCustomer Int?      @default(10)
   startSale      DateTime?
   endSale        DateTime?
-  rolePricing    Json? // Role-based pricing
+  rolePricing    Json?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
   event   Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
   tickets Ticket[]
+  paymentSessions PaymentSession[]
 }
 
+// Ticket Model
 model Ticket {
   id            String       @id @default(cuid())
   eventId       String
@@ -237,6 +274,7 @@ model Ticket {
   order TicketSale @relation(fields: [orderId], references: [id])
 }
 
+// Ticket Sale Model
 model TicketSale {
   id            String   @id @default(cuid())
   organizerId   String
@@ -253,11 +291,13 @@ model TicketSale {
   transactionId String?
   createdAt     DateTime @default(now())
 
-  organizer EventOrganizer @relation(fields: [organizerId], references: [id])
+   organizer EventOrganizer @relation(fields: [organizerId], references: [id])
   event     Event          @relation(fields: [eventId], references: [id])
   tickets   Ticket[]
+  paymentSessions PaymentSession[] 
 }
 
+// Waitlist Entry
 model WaitlistEntry {
   id        String   @id @default(cuid())
   eventId   String
@@ -272,6 +312,7 @@ model WaitlistEntry {
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 }
 
+// Event View
 model EventView {
   id        String   @id @default(cuid())
   eventId   String
@@ -318,7 +359,7 @@ model Department {
   name           String
   code           String?
   budget         Float?
-  managerId      String? // User ID of department manager
+  managerId      String?
   createdAt      DateTime @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -334,8 +375,8 @@ model Employee {
   employeeId     String   @unique
   jobTitle       String
   grade          String?
-  bankAccount    Json? // Encrypted bank details
-  mobileMoney    Json? // Encrypted mobile money details
+  bankAccount    Json?
+  mobileMoney    Json?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -350,8 +391,8 @@ model Approver {
   userId         String   @unique
   organizationId String
   approvalLevel  Int      @default(1)
-  maxAmount      Float? // Maximum amount they can approve
-  departments    Json? // Departments they can approve for
+  maxAmount      Float?
+  departments    Json?
   createdAt      DateTime @default(now())
 
   user         User         @relation(fields: [userId], references: [id])
@@ -363,7 +404,7 @@ model FinanceOfficer {
   id             String   @id @default(cuid())
   userId         String   @unique
   organizationId String
-  role           String // finance_officer, finance_manager, accountant
+  role           String
   createdAt      DateTime @default(now())
 
   user         User                @relation(fields: [userId], references: [id])
@@ -395,7 +436,7 @@ model DsaRequest {
   purpose           String
   startDate         DateTime
   endDate           DateTime
-  duration          Int // Calculated days
+  duration          Int
   perDiemRate       Float
   accommodationRate Float?
   totalAmount       Float
@@ -417,7 +458,7 @@ model Approval {
   requestId  String
   approverId String
   level      Int
-  status     String // approved, rejected, pending
+  status     String
   comments   String?
   approvedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -448,7 +489,7 @@ model DisbursementBatch {
   batchNumber      String    @unique
   totalAmount      Float
   itemCount        Int
-  status           String // pending, processing, completed, failed
+  status           String
   metadata         Json?
   processedAt      DateTime?
   createdAt        DateTime  @default(now())
@@ -466,8 +507,8 @@ model DisbursementItem {
   recipientPhone   String?
   recipientAccount String?
   amount           Float
-  paymentMethod    String // airtel, mpamba, bank
-  status           String // pending, success, failed
+  paymentMethod    String
+  status           String
   providerRef      String?
   errorMessage     String?
   retryCount       Int       @default(0)
@@ -489,9 +530,9 @@ model Transaction {
   fee            Float    @default(0)
   netAmount      Float
   currency       String   @default("MWK")
-  status         String // pending, success, failed, refunded
+  status         String
   paymentMethod  String
-  provider       String? // airtel, mpamba, bank, card
+  provider       String?
   providerRef    String?
   metadata       Json?
   createdAt      DateTime @default(now())
@@ -551,7 +592,7 @@ model Order {
   customerEmail   String
   customerPhone   String?
   totalAmount     Float
-  status          String // pending, paid, processing, shipped, delivered
+  status          String
   shippingAddress Json?
   notes           String?
   transactionId   String?
@@ -585,7 +626,7 @@ model Settlement {
   feeAmount        Float
   netAmount        Float
   transactionCount Int
-  status           String // pending, processing, completed
+  status           String
   bankReference    String?
   settledAt        DateTime?
   createdAt        DateTime  @default(now())
@@ -599,7 +640,7 @@ model Refund {
   transactionId String
   amount        Float
   reason        String?
-  status        String // pending, completed, failed
+  status        String
   providerRef   String?
   createdAt     DateTime @default(now())
 
@@ -610,7 +651,7 @@ model Refund {
 model Admin {
   id          String   @id @default(cuid())
   userId      String   @unique
-  role        String // super_admin, support, compliance
+  role        String
   permissions Json?
   createdAt   DateTime @default(now())
 
@@ -659,7 +700,6 @@ model AuditLog {
 
   transaction Transaction? @relation(fields: [transactionId], references: [id])
 }
-
 
 // Enums
 enum UserRole {
