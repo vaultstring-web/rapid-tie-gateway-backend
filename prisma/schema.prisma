@@ -44,6 +44,15 @@ model User {
   sessions       Session[]
   notifications  Notification[]
   activityLogs   ActivityLog[]
+   // Add these new relations for networking
+  sentConnections    Connection[] @relation("UserFromConnections")
+  receivedConnections Connection[] @relation("UserToConnections")
+  sentMessages       Message[]    @relation("UserFromMessages")
+  receivedMessages   Message[]    @relation("UserToMessages")
+  networkingProfile  NetworkingProfile?
+  notificationPreferences NotificationPreferences?
+   communicationRecipients CommunicationRecipient[]
+  communicationOptOuts   CommunicationOptOut[]
 }
 
 model Session {
@@ -163,6 +172,7 @@ model EventOrganizer {
   ticketSales  TicketSale[]
   transactions Transaction[]
   settlements  Settlement[]
+   communications Communication[]
 }
 
 // PAYMENT MODELS - MUST BE DEFINED BEFORE Event, TicketTier, TicketSale
@@ -230,6 +240,13 @@ model Event {
   ticketSales  TicketSale[]
   paymentLinks PaymentLink[]
   paymentSessions PaymentSession[]
+  // Add these new relations for networking
+  connections        Connection[]
+  messages           Message[]
+  networkingMetrics  NetworkingMetric?
+  networkingProfiles NetworkingProfile[]
+  communications Communication[]
+  communicationOptOuts CommunicationOptOut[]
 }
 
 // Ticket Tier Model
@@ -268,6 +285,7 @@ model Ticket {
   checkedInAt   DateTime?
   checkedInBy   String?
   createdAt     DateTime     @default(now())
+  metadata      Json?
 
   event Event      @relation(fields: [eventId], references: [id])
   tier  TicketTier @relation(fields: [tierId], references: [id])
@@ -673,6 +691,47 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+model NotificationPreferences {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  
+  // Email settings
+  emailNotifications  Boolean  @default(true)
+  emailDigest         String   @default("daily") // daily, weekly, never
+  
+  // Push settings
+  pushNotifications   Boolean  @default(true)
+  
+  // Notification types
+  eventReminders      Boolean  @default(true)
+  eventRecommendations Boolean  @default(true)
+  connectionRequests  Boolean  @default(true)
+  messages            Boolean  @default(true)
+  promotions          Boolean  @default(false)
+  paymentConfirmations Boolean  @default(true)
+  eventUpdates        Boolean  @default(true)
+  
+  // Quiet hours
+  quietHoursEnabled   Boolean  @default(false)
+  quietHoursStart     String?  // Format: "22:00"
+  quietHoursEnd       String?  // Format: "08:00"
+  quietHoursTimezone  String   @default("Africa/Blantyre")
+  
+  // Digest settings
+  digestFrequency     String   @default("daily") // daily, weekly, never
+  digestDay           Int?     // 0-6 (Sunday-Saturday) for weekly digest
+  digestTime          String   @default("09:00")
+  
+  // Additional preferences
+  notifyBeforeEvent   Int      @default(24) // Hours before event to send reminder
+  maxNotificationsPerDay Int   @default(50)
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
 model ActivityLog {
   id        String   @id @default(cuid())
   userId    String?
@@ -701,6 +760,123 @@ model AuditLog {
   transaction Transaction? @relation(fields: [transactionId], references: [id])
 }
 
+model Connection {
+  id                String   @id @default(cuid())
+  fromUserId        String
+  toUserId          String
+  eventId           String
+  status            String   @default("pending")
+  matchedAt         DateTime @default(now())
+  connectedAt       DateTime?
+  connectionScore   Int      @default(0)
+  
+  fromUser          User     @relation("UserFromConnections", fields: [fromUserId], references: [id])
+  toUser            User     @relation("UserToConnections", fields: [toUserId], references: [id])
+  event             Event    @relation(fields: [eventId], references: [id])
+  messages          Message[]
+  
+  @@unique([fromUserId, toUserId, eventId])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  connectionId   String
+  fromUserId     String
+  toUserId       String
+  eventId        String
+  content        String
+  isRead         Boolean  @default(false)
+  readAt         DateTime?
+  createdAt      DateTime @default(now())
+  
+  connection     Connection @relation(fields: [connectionId], references: [id])
+  fromUser       User       @relation("UserFromMessages", fields: [fromUserId], references: [id])
+  toUser         User       @relation("UserToMessages", fields: [toUserId], references: [id])
+  event          Event      @relation(fields: [eventId], references: [id])
+}
+
+model NetworkingMetric {
+  id              String   @id @default(cuid())
+  eventId         String   @unique
+  totalConnections Int     @default(0)
+  totalMessages   Int      @default(0)
+  activeUsers     Int      @default(0)
+  connectionsByRole Json?
+  updatedAt       DateTime @updatedAt
+  
+  event           Event    @relation(fields: [eventId], references: [id])
+}
+
+model NetworkingProfile {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  eventId      String
+  optIn        Boolean  @default(true)
+  interests    String[]
+  jobTitle     String?
+  company      String?
+  linkedIn     String?
+  twitter      String?
+  bio          String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id])
+  event        Event    @relation(fields: [eventId], references: [id])
+}
+model Communication {
+  id              String    @id @default(cuid())
+  eventId         String
+  organizerId     String
+  subject         String
+  content         String
+  contentType     String    @default("email") // email, sms, push
+  status          String    @default("draft") // draft, queued, sending, sent, failed
+  filters         Json?     // Role filters, etc.
+  totalRecipients Int       @default(0)
+  sentCount       Int       @default(0)
+  openCount       Int       @default(0)
+  clickCount      Int       @default(0)
+  createdAt       DateTime  @default(now())
+  sentAt          DateTime?
+  scheduledFor    DateTime?
+  
+  event     Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  organizer EventOrganizer @relation(fields: [organizerId], references: [id])
+  recipients CommunicationRecipient[]
+}
+
+model CommunicationRecipient {
+  id              String    @id @default(cuid())
+  communicationId String
+  userId          String?
+  email           String
+  name            String
+  role            String
+  status          String    @default("pending") // pending, sent, delivered, failed, opened, clicked, opted_out
+  sentAt          DateTime?
+  openedAt        DateTime?
+  clickedAt       DateTime?
+  optedOutAt      DateTime?
+  error           String?
+  
+  communication Communication @relation(fields: [communicationId], references: [id], onDelete: Cascade)
+  user          User?         @relation(fields: [userId], references: [id])
+}
+
+model CommunicationOptOut {
+  id         String   @id @default(cuid())
+  email      String
+  eventId    String?
+  userId     String?
+  reason     String?
+  createdAt  DateTime @default(now())
+  
+  user  User?  @relation(fields: [userId], references: [id])
+  event Event? @relation(fields: [eventId], references: [id])
+  
+  @@unique([email, eventId])
+}
 // Enums
 enum UserRole {
   PUBLIC

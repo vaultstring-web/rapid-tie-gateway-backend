@@ -367,4 +367,158 @@ The Organizer and Auth endpoints were tested using Thunder Client in VS Code.
 4. Enter endpoint URL  
 5. Add Authorization header if required  
 6. Send request
+## 🎫 Event Ticketing System 
+### Architecture Flow
+Event Creation → Ticket Tiers → Ticket Validation → Payment Processing → Order Confirmation → Sales Dashboard → Attendee Management → Check-in
 
+---
+
+## 📡 API Endpoints Summary
+
+### Event Management
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /api/organizer/events | Organizer dashboard with upcoming/past events |
+| POST | /api/organizer/events | Create new event with image uploads |
+| PUT | /api/organizer/events/:id | Update event details |
+| GET | /api/events/:id/tiers | Get event ticket tiers with availability |
+
+### Ticketing & Checkout
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /api/public/tickets/validate | Validate tickets, lock inventory, generate session token |
+| POST | /api/events/:id/purchase | Purchase tickets, create reservation |
+| POST | /api/payments/initiate | Process payment (Airtel/Mpamba/Card) |
+| GET | /api/orders/:id | Get order confirmation with QR codes |
+| POST | /api/orders/:id/send-email | Send ticket confirmation email |
+| POST | /api/orders/:id/update-inventory | Permanently update inventory |
+
+### Sales & Analytics
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /api/organizer/events/:id/sales | Real-time sales dashboard |
+| WS | ws://localhost:3001 | WebSocket for live sales updates |
+
+### Attendee Management
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /api/organizer/events/:id/attendees?page=1&limit=50 | Paginated attendee list |
+| GET | /api/organizer/events/:id/attendees/export | Export attendees to CSV |
+| GET | /api/organizer/events/:id/attendees/stats | Attendee statistics |
+
+### Check-in Management
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /api/events/checkin | Single ticket check-in with QR validation |
+| POST | /api/events/checkin/batch | Batch check-in multiple tickets |
+| GET | /api/events/checkin/stats/:eventId | Check-in statistics by role |
+| POST | /api/organizer/checkin/offline-sync | Sync offline check-ins |
+
+---
+
+## 🔄 Complete Ticket Purchase Flow
+
+### Step 1: Organizer Creates Event
+POST /api/organizer/events
+Authorization: Bearer TOKEN
+
+{
+  "name": "Tech Conference 2026",
+  "description": "Annual technology conference",
+  "startDate": "2026-06-10T18:00:00.000Z",
+  "endDate": "2026-06-10T22:00:00.000Z",
+  "venue": "BICC",
+  "city": "Lilongwe",
+  "capacity": 500,
+  "visibility": "public"
+}
+
+### Step 2: Customer Views Available Tickets
+GET /api/events/{eventId}/tiers
+
+### Step 3: Customer Validates & Reserves Tickets
+POST /api/public/tickets/validate
+{
+  "tierId": "tier_id",
+  "quantity": 2,
+  "purchaserRole": "PUBLIC"
+}
+
+### Step 4: Customer Initiates Payment
+POST /api/payments/initiate
+{
+  "sessionToken": "abc-123-def",
+  "paymentMethod": "airtel_money",
+  "provider": "airtel",
+  "customerPhone": "0888123456"
+}
+
+### Step 5: Get Order Confirmation with QR Codes
+GET /api/orders/{orderId}
+
+### Step 6: Send Confirmation Email
+POST /api/orders/{orderId}/send-email
+
+### Step 7: Update Inventory Permanently
+POST /api/orders/{orderId}/update-inventory
+
+---
+
+## ✅ Check-in Management
+
+### Single Ticket Check-in
+POST /api/events/checkin
+{
+  "qrCode": "345879ca-a0d9-4904-b06b-5c1d832938dd",
+  "role": "SECURITY_GUARD",
+  "deviceId": "scanner-01"
+}
+
+### Batch Check-in
+POST /api/events/checkin/batch
+{
+  "tickets": [
+    {"qrCode": "qr-code-1"},
+    {"qrCode": "qr-code-2"}
+  ],
+  "role": "EVENT_STAFF"
+}
+
+### Check-in Statistics
+GET /api/events/checkin/stats/{eventId}
+
+---
+
+## 🧪 Test Data (After Seeding)
+
+### Test QR Codes
+1. 345879ca-a0d9-4904-b06b-5c1d832938dd
+2. 40394c9d-fe66-4953-b86d-04aacabc8566
+3. 8c8575cd-44d0-4285-891d-4ae1b5a80ff8
+
+### Test Endpoints
+GET /api/events/{eventId}/tiers
+GET /api/organizer/events/{eventId}/sales
+GET /api/organizer/events/{eventId}/attendees
+POST /api/events/checkin
+
+---
+
+## ✅ Feature Checklist
+
+| Feature | Status |
+|---------|--------|
+| Event Creation | ✅ |
+| Ticket Tiers | ✅ |
+| Ticket Validation | ✅ |
+| Inventory Locking | ✅ |
+| Payment Processing | ✅ |
+| QR Code Generation | ✅ |
+| Email Confirmation | ✅ |
+| Sales Dashboard | ✅ |
+| WebSocket Updates | ✅ |
+| Attendee List | ✅ |
+| CSV Export | ✅ |
+| Check-in System | ✅ |
+| Batch Check-in | ✅ |
+| Offline Sync | ✅ |
