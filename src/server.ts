@@ -7,12 +7,14 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
-import { Server } from 'socket.io';
+import { Server as SocketServer } from 'socket.io';
 import { PrismaClient } from '@prisma/client';
+import jwt from 'jsonwebtoken'; // ADDED for notification authentication
+import attendeesRoutes from './routes/attendees.routes';
 // Load environment variables
 dotenv.config();
 
-// Import routes (we'll create these next)
+// Import routes
 import authRoutes from './routes/auth.routes';
 import merchantRoutes from './routes/merchant.routes';
 import organizerRoutes from './routes/organizer.routes';
@@ -23,6 +25,16 @@ import adminRoutes from './routes/admin.routes';
 import eventRoutes from './routes/event.routes';
 import paymentRoutes from './routes/payment.routes';
 import webhookRoutes from './routes/webhook.routes';
+import orderRoutes from './routes/order.routes';
+import salesRoutes from './routes/sale.routes';
+import analyticsRoutes from './routes/analytics.routes';
+import universalRoutes from './routes/universal.routes';
+import recommendationsRoutes from './routes/recommendations.routes';
+import calendarRoutes from './routes/calendar.routes';
+import networkingRoutes from './routes/networking.routes';
+import notificationRoutes from './routes/notification.routes';
+ import qrcodeRoutes from './routes/qrcode.routes';
+ import communicationRoutes from './routes/communication.routes';
 
 // Import middleware
 import { errorHandler } from './utils/errorHandler';
@@ -32,20 +44,14 @@ import { logger } from './utils/logger';
 // Initialize Express
 const app: Application = express();
 const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    credentials: true,
-  },
-});
 
 // Initialize Prisma
-export const prisma = new PrismaClient();
+const prisma = new PrismaClient();
 
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 100,
   message: 'Too many requests from this IP, please try again later.',
 });
 
@@ -84,27 +90,163 @@ app.use('/api/employee', employeeRoutes);
 app.use('/api/approver', approverRoutes);
 app.use('/api/finance', financeRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/events', eventRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/webhooks', webhookRoutes);
-app.use('/api/organizer', organizerRoutes);
+app.use('/api/events', eventRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/organizer', salesRoutes);
+app.use('/api/organizer', attendeesRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/events', universalRoutes);
+app.use('/api/events', recommendationsRoutes);
+app.use('/api/calendar', calendarRoutes);
+app.use('/api/events', networkingRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/organizer', qrcodeRoutes); 
+app.use('/api/organizer', communicationRoutes);
+app.use('/api', communicationRoutes); 
+
 // Error handling
 app.use(notfound);
 app.use(errorHandler);
+
+// Initialize Socket.IO
+const io = new SocketServer(httpServer, {
+  cors: {
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    credentials: true,
+  }
+});
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   logger.info(`Client connected: ${socket.id}`);
 
-  socket.on('authenticate', (token: string) => {
-    // Handle authentication
-    socket.join(`user-${token}`);
+  // AUTHENTICATION for notifications
+  socket.on('authenticate', async (token: string) => {
+    try {
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) {
+        throw new Error('JWT_SECRET not defined');
+      }
+      const decoded = jwt.verify(token, jwtSecret) as { id: string };
+      const user = await prisma.user.findUnique({ where: { id: decoded.id } });
+      
+      if (user) {
+        socket.join(`user-${user.id}`);
+        logger.info(`User ${user.email} authenticated for notifications`);
+        
+        // Send unread count on connect
+        const unreadCount = await prisma.notification.count({
+          where: { userId: user.id, read: false },
+        });
+        socket.emit('unread-count', { count: unreadCount });
+      } else {
+        console.error('User not found for token'); // FIXED: changed to console.error
+      }
+    } catch (error) {
+      console.error('Socket authentication error:', error); // FIXED: changed to console.error
+    }
+  });
+
+  // Join notifications room
+  socket.on('join-notifications', (userId: string) => {
+    socket.join(`user-${userId}`);
+    logger.info(`Client ${socket.id} joined notifications for user ${userId}`);
+  });
+
+  // Join event rooms for real-time sales updates
+  socket.on('join-event-sales', async (eventId: string) => {
+    socket.join(`event-${eventId}`);
+    logger.info(`Client ${socket.id} joined event-${eventId} sales room`);
+    
+    // Send immediate update when joining
+    try {
+      const sales = await prisma.ticketSale.findMany({
+        where: { eventId: eventId },
+        include: {
+          tickets: {
+            include: {
+              tier: true
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5
+      });
+      
+      const totalRevenue = sales.reduce((sum: number, sale: any) => sum + sale.totalAmount, 0);
+      const totalTicketsSold = sales.reduce((sum: number, sale: any) => sum + sale.tickets.length, 0);
+      
+      socket.emit('sales-update', {
+        eventId,
+        totalRevenue,
+        totalTicketsSold,
+        lastUpdate: new Date().toISOString(),
+        recentSales: sales
+      });
+    } catch (error) {
+      console.error('Error sending initial sales data:', error); // FIXED: changed to console.error
+    }
+  });
+
+  socket.on('leave-event-sales', (eventId: string) => {
+    socket.leave(`event-${eventId}`);
+    logger.info(`Client ${socket.id} left event-${eventId} sales room`);
+  });
+
+  // Handle real-time mark as read
+  socket.on('mark-read', async (notificationId: string) => {
+    try {
+      await prisma.notification.update({
+        where: { id: notificationId },
+        data: { read: true, readAt: new Date() },
+      });
+      logger.info(`Notification ${notificationId} marked as read via socket`);
+    } catch (error) {
+      console.error('Error marking notification as read:', error); // FIXED: changed to console.error
+    }
   });
 
   socket.on('disconnect', () => {
     logger.info(`Client disconnected: ${socket.id}`);
   });
 });
+// Function to emit sales updates (can be called from other parts of the app)
+const emitSalesUpdate = async (eventId: string) => {
+  try {
+    const sales = await prisma.ticketSale.findMany({
+      where: { eventId: eventId },
+      include: {
+        tickets: {
+          include: {
+            tier: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5
+    });
+
+    const totalRevenue = sales.reduce((sum, sale) => sum + sale.totalAmount, 0);
+    const totalTicketsSold = sales.reduce((sum, sale) => sum + sale.tickets.length, 0);
+
+    io.to(`event-${eventId}`).emit('sales-update', {
+      eventId,
+      totalRevenue,
+      totalTicketsSold,
+      lastUpdate: new Date().toISOString(),
+      recentSales: sales
+    });
+  } catch (error) {
+    logger.error('Error emitting sales update:', error);
+  }
+};
+
+// Function to emit notification to user (ADDED)
+const emitNotification = (userId: string, notification: any) => {
+  io.to(`user-${userId}`).emit('new-notification', notification);
+};
 
 // Start server
 const PORT = process.env.PORT || 3001;
@@ -116,6 +258,7 @@ httpServer.listen(PORT, () => {
   ║     Server is running on port ${PORT}        ║
   ║     Environment: ${process.env.NODE_ENV}                 ║
   ║     Frontend: ${process.env.FRONTEND_URL}   ║
+  ║     WebSocket: ws://localhost:${PORT}        ║
   ╚════════════════════════════════════════════╝
   `);
 });
@@ -126,8 +269,9 @@ process.on('SIGTERM', () => {
   httpServer.close(() => {
     logger.info('HTTP server closed');
     prisma.$disconnect();
+    io.close();
     process.exit(0);
   });
 });
 
-export { io };
+export { io, prisma, emitSalesUpdate, emitNotification };

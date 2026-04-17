@@ -1,7 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { AuthController } from '../controllers/auth.controller';
 import { authenticate } from '../middlewares/auth';
-import { forgotPasswordLimiter, loginRateLimiter } from '../middlewares/rateLimiter'; // 👈 added
+import { forgotPasswordLimiter, loginRateLimiter } from '../middlewares/rateLimiter'; 
+import { prisma } from '../server';
+import jwt from 'jsonwebtoken';
 
 // Explicitly type the router
 const router: Router = Router();
@@ -95,6 +97,54 @@ router.get('/test', (_req: Request, res: Response) => {
     message: 'Auth route working!',
     timestamp: new Date().toISOString()
   });
+});
+router.get('/status', async (req: any, res) => {
+  try {
+    const token =
+      req.cookies?.token ||
+      req.headers.authorization?.split(' ')[1];
+
+    // No token → health check
+    if (!token) {
+      return res.json({
+        success: true,
+        authenticated: false,
+        status: 'ok'
+      });
+    }
+
+    try {
+      const decoded: any = jwt.verify(token, process.env.JWT_SECRET as string);
+
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.id },
+        include: {
+          merchant: true,
+          organizer: true,
+        }
+      });
+
+      return res.json({
+        success: true,
+        authenticated: !!user,
+        user: user || null
+      });
+
+    } catch (err) {
+      return res.json({
+        success: true,
+        authenticated: false,
+        status: 'ok'
+      });
+    }
+
+  } catch (error) {
+    return res.json({
+      success: true,
+      authenticated: false,
+      status: 'ok'
+    });
+  }
 });
 router.get('/verify', authController.verifyEmail.bind(authController));
 

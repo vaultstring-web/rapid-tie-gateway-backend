@@ -42,6 +42,10 @@ async function main() {
     prisma.merchant.deleteMany(),
     prisma.admin.deleteMany(),
     prisma.user.deleteMany(),
+    prisma.networkingProfile.deleteMany(),
+    prisma.connection.deleteMany(),
+    prisma.message.deleteMany(),
+    prisma.networkingMetric.deleteMany(),
   ]);
 
   console.log('✅ Existing data cleared');
@@ -372,7 +376,44 @@ async function main() {
   });
   console.log(`✅ Created finance officer: ${financeOfficer.email}`);
 
+  // ============================================
+  // CREATE JANE AND JOHN USERS (for networking)
+  // ============================================
+  console.log('\n📝 Creating networking test users...');
+  
+  const janePassword = await bcrypt.hash('Test@123', 10);
+  const jane = await prisma.user.upsert({
+    where: { email: 'jane@email.com' },
+    update: {},
+    create: {
+      email: 'jane@email.com',
+      password: janePassword,
+      firstName: 'Jane',
+      lastName: 'Nyirenda',
+      role: 'PUBLIC',
+      emailVerified: true,
+    },
+  });
+  console.log(`✅ Created user: ${jane.email} (has ticket purchases)`);
+
+  const johnPassword = await bcrypt.hash('Test@123', 10);
+  const john = await prisma.user.upsert({
+    where: { email: 'john@example.com' },
+    update: {},
+    create: {
+      email: 'john@example.com',
+      password: johnPassword,
+      firstName: 'John',
+      lastName: 'Doe',
+      role: 'PUBLIC',
+      emailVerified: true,
+    },
+  });
+  console.log(`✅ Created user: ${john.email}`);
+
   // Create sample events - MAKING SURE ORGANIZER EXISTS
+  let testEvent: any = null;
+  
   if (organizerUser.organizer) {
     const event1 = await prisma.event.create({
       data: {
@@ -466,8 +507,404 @@ async function main() {
       },
     });
     console.log(`✅ Created event: ${event2.name}`);
+
+    // ============================================
+    // ADD TEST EVENT FOR YOUR TICKETING SYSTEM
+    // ============================================
+    console.log('\n📝 Creating test event for ticketing system...');
+    
+    testEvent = await prisma.event.create({
+      data: {
+        organizerId: organizerUser.organizer.id,
+        name: 'Updated Tech Event',
+        description: 'Official Opening of the company',
+        shortDescription: 'Official launch',
+        category: 'Gala',
+        type: 'Public',
+        venue: 'BICC',
+        city: 'Lilongwe',
+        amount: 100,
+        country: 'Malawi',
+        startDate: new Date('2026-06-10T18:00:00.000Z'),
+        endDate: new Date('2026-06-10T22:00:00.000Z'),
+        timezone: 'Central Africa',
+        coverImage: 'https://example.com/cover.jpg',
+        images: ['https://example.com/img1.jpg', 'https://example.com/img2.jpg'],
+        capacity: 100,
+        status: 'COMPLETED',
+        visibility: 'public',
+      },
+    });
+    console.log(`✅ Created test event: ${testEvent.name} (ID: ${testEvent.id})`);
+
+    // Create ticket tiers for test event
+    const vipTier = await prisma.ticketTier.create({
+      data: {
+        eventId: testEvent.id,
+        name: 'VIP',
+        description: 'VIP Access',
+        price: 20000,
+        quantity: 50,
+        sold: 10,
+        maxPerCustomer: 5,
+        startSale: new Date('2026-04-10T08:00:00.000Z'),
+        endSale: new Date('2026-06-10T18:00:00.000Z'),
+        rolePricing: {
+          student: 15000,
+          vip_member: 12000
+        },
+      },
+    });
+
+     await prisma.ticketTier.create({
+      data: {
+        eventId: testEvent.id,
+        name: 'Regular',
+        description: 'Regular Access',
+        price: 10000,
+        quantity: 100,
+        sold: 0,
+        maxPerCustomer: 10,
+        startSale: new Date('2026-04-10T08:00:00.000Z'),
+        endSale: new Date('2026-06-10T18:00:00.000Z'),
+        rolePricing: {
+          student: 8000,
+          vip_member: 7000
+        },
+      },
+    });
+
+    console.log(`✅ Created ticket tiers: VIP (MWK 20,000), Regular (MWK 10,000)`);
+
+    // Create test orders and tickets
+    console.log('Creating test orders and tickets...');
+    
+    // Order 1 - Jane Nyirenda (2 VIP tickets)
+    const order1 = await prisma.ticketSale.create({
+      data: {
+        organizerId: organizerUser.organizer.id,
+        eventId: testEvent.id,
+        orderNumber: 'ORD-1775739339792',
+        customerName: 'Jane Nyirenda',
+        customerEmail: 'jane@email.com',
+        customerPhone: '0991234567',
+        totalAmount: 40000,
+        feeAmount: 1200,
+        netAmount: 38800,
+        status: 'completed',
+        paymentMethod: 'airtel_money',
+        transactionId: 'cmnrhgoey0009rcyj0wko2eq7',
+      },
+    });
+
+    await prisma.ticket.createMany({
+      data: [
+        {
+          id: 'd2539793-9478-40f2-bd82-68f4c4487773',
+          eventId: testEvent.id,
+          tierId: vipTier.id,
+          orderId: order1.id,
+          attendeeName: 'Jane Nyirenda',
+          attendeeEmail: 'jane@email.com',
+          attendeePhone: '0991234567',
+          qrCode: '345879ca-a0d9-4904-b06b-5c1d832938dd',
+          qrCodeData: JSON.stringify({ ticketId: 'd2539793-9478-40f2-bd82-68f4c4487773', eventId: testEvent.id, tierId: vipTier.id }),
+          status: 'ACTIVE',
+        },
+        {
+          id: '5af3d2f3-16a0-4987-b33f-54258605c08a',
+          eventId: testEvent.id,
+          tierId: vipTier.id,
+          orderId: order1.id,
+          attendeeName: 'Jane Nyirenda',
+          attendeeEmail: 'jane@email.com',
+          attendeePhone: '0991234567',
+          qrCode: '40394c9d-fe66-4953-b86d-04aacabc8566',
+          qrCodeData: JSON.stringify({ ticketId: '5af3d2f3-16a0-4987-b33f-54258605c08a', eventId: testEvent.id, tierId: vipTier.id }),
+          status: 'ACTIVE',
+        },
+      ],
+    });
+
+    // Order 2 - Test Failure (1 VIP ticket)
+    const order2 = await prisma.ticketSale.create({
+      data: {
+        organizerId: organizerUser.organizer.id,
+        eventId: testEvent.id,
+        orderNumber: 'ORD-1775744584154',
+        customerName: 'Test Failure',
+        customerEmail: 'fail@test.com',
+        customerPhone: '0999999999',
+        totalAmount: 20000,
+        feeAmount: 600,
+        netAmount: 19400,
+        status: 'completed',
+        paymentMethod: 'airtel_money',
+      },
+    });
+
+    await prisma.ticket.create({
+      data: {
+        id: 'f8dc62cc-c3e4-4f0e-9d4a-3b5e8c9d7a2b',
+        eventId: testEvent.id,
+        tierId: vipTier.id,
+        orderId: order2.id,
+        attendeeName: 'Test Failure',
+        attendeeEmail: 'fail@test.com',
+        attendeePhone: '0999999999',
+        qrCode: '8c8575cd-44d0-4285-891d-4ae1b5a80ff8',
+        qrCodeData: JSON.stringify({ ticketId: 'f8dc62cc-c3e4-4f0e-9d4a-3b5e8c9d7a2b', eventId: testEvent.id, tierId: vipTier.id }),
+        status: 'ACTIVE',
+      },
+    });
+
+    // Order 3 - Another test order (2 VIP tickets) for Jane
+    const order3 = await prisma.ticketSale.create({
+      data: {
+        organizerId: organizerUser.organizer.id,
+        eventId: testEvent.id,
+        orderNumber: 'ORD-1775736840178',
+        customerName: 'Jane Nyirenda',
+        customerEmail: 'jane@email.com',
+        customerPhone: '0991234567',
+        totalAmount: 40000,
+        feeAmount: 1200,
+        netAmount: 38800,
+        status: 'completed',
+        paymentMethod: 'airtel_money',
+      },
+    });
+
+    await prisma.ticket.createMany({
+      data: [
+        {
+          id: '3c23a844-1b2d-4e5f-8a9b-0c1d2e3f4a5b',
+          eventId: testEvent.id,
+          tierId: vipTier.id,
+          orderId: order3.id,
+          attendeeName: 'Jane Nyirenda',
+          attendeeEmail: 'jane@email.com',
+          attendeePhone: '0991234567',
+          qrCode: '3c6608f1-f0ae-44e6-8542-c9bec15377cf',
+          qrCodeData: JSON.stringify({ ticketId: '3c23a844-1b2d-4e5f-8a9b-0c1d2e3f4a5b', eventId: testEvent.id, tierId: vipTier.id }),
+          status: 'ACTIVE',
+        },
+        {
+          id: '4d34b955-2c3e-5f6g-9b0c-1d2e3f4g5b6c',
+          eventId: testEvent.id,
+          tierId: vipTier.id,
+          orderId: order3.id,
+          attendeeName: 'Jane Nyirenda',
+          attendeeEmail: 'jane@email.com',
+          attendeePhone: '0991234567',
+          qrCode: '2384a6bf-5a61-4363-be3e-7ff7e223e23a',
+          qrCodeData: JSON.stringify({ ticketId: '4d34b955-2c3e-5f6g-9b0c-1d2e3f4g5b6c', eventId: testEvent.id, tierId: vipTier.id }),
+          status: 'ACTIVE',
+        },
+      ],
+    });
+
+    // Order 4 - John's ticket (so he attends the same event)
+    const order4 = await prisma.ticketSale.create({
+      data: {
+        organizerId: organizerUser.organizer.id,
+        eventId: testEvent.id,
+        orderNumber: 'ORD-1775724032346',
+        customerName: 'John Doe',
+        customerEmail: 'john@example.com',
+        customerPhone: '0999111222',
+        totalAmount: 20000,
+        feeAmount: 600,
+        netAmount: 19400,
+        status: 'completed',
+        paymentMethod: 'airtel_money',
+      },
+    });
+
+    await prisma.ticket.create({
+      data: {
+        id: '9i89g499-7h8j-0k1l-4g5h-6i7j8k9l0g1h',
+        eventId: testEvent.id,
+        tierId: vipTier.id,
+        orderId: order4.id,
+        attendeeName: 'John Doe',
+        attendeeEmail: 'john@example.com',
+        attendeePhone: '0999111222',
+        qrCode: '9a8b7c6d-5e4f-3g2h-1i0j-9k8l7m6n5o4p',
+        qrCodeData: JSON.stringify({ ticketId: '9i89g499-7h8j-0k1l-4g5h-6i7j8k9l0g1h', eventId: testEvent.id, tierId: vipTier.id }),
+        status: 'ACTIVE',
+      },
+    });
+
+    // Order 5 - More tickets for Jane
+    const order5 = await prisma.ticketSale.create({
+      data: {
+        organizerId: organizerUser.organizer.id,
+        eventId: testEvent.id,
+        orderNumber: 'ORD-1775722943271',
+        customerName: 'Jane Nyirenda',
+        customerEmail: 'jane@email.com',
+        customerPhone: '0991234567',
+        totalAmount: 40000,
+        feeAmount: 1200,
+        netAmount: 38800,
+        status: 'completed',
+        paymentMethod: 'airtel_money',
+      },
+    });
+
+    await prisma.ticket.createMany({
+      data: [
+        {
+          id: '7g67e288-5f6h-8i9j-2e3f-4g5h6i7j8e9f',
+          eventId: testEvent.id,
+          tierId: vipTier.id,
+          orderId: order5.id,
+          attendeeName: 'Jane Nyirenda',
+          attendeeEmail: 'jane@email.com',
+          attendeePhone: '0991234567',
+          qrCode: 'ac52eb75-2832-46b7-8750-f7ed62f947c3',
+          qrCodeData: JSON.stringify({ ticketId: '7g67e288-5f6h-8i9j-2e3f-4g5h6i7j8e9f', eventId: testEvent.id, tierId: vipTier.id }),
+          status: 'ACTIVE',
+        },
+        {
+          id: '8h78f399-6g7i-9j0k-3f4g-5h6i7j8k9f0g',
+          eventId: testEvent.id,
+          tierId: vipTier.id,
+          orderId: order5.id,
+          attendeeName: 'Jane Nyirenda',
+          attendeeEmail: 'jane@email.com',
+          attendeePhone: '0991234567',
+          qrCode: '6ca6a31e-d2e8-4873-b3c3-246d9dfe0e10',
+          qrCodeData: JSON.stringify({ ticketId: '8h78f399-6g7i-9j0k-3f4g-5h6i7j8k9f0g', eventId: testEvent.id, tierId: vipTier.id }),
+          status: 'ACTIVE',
+        },
+      ],
+    });
+
+    // Create transaction record
+    await prisma.transaction.create({
+      data: {
+        transactionRef: 'TXN-1775739522193-20ed1e01',
+        amount: 40000,
+        fee: 1200,
+        netAmount: 38800,
+        currency: 'MWK',
+        status: 'success',
+        paymentMethod: 'airtel_money',
+        provider: 'airtel',
+        providerRef: 'AIR-1775739522195',
+        organizerId: organizerUser.organizer.id,
+        orderId: order1.id,
+        metadata: {
+          tierId: vipTier.id,
+          eventId: testEvent.id,
+          quantity: 2,
+          sessionToken: '9390f903-6e3e-4f60-a312-ee557264e0eb'
+        },
+      },
+    });
+
+    console.log(`✅ Created test orders with tickets for "Updated Tech Event"`);
+    console.log(`   - Jane has 8 tickets`);
+    console.log(`   - John has 1 ticket`);
+
+    // ============================================
+    // CREATE NETWORKING PROFILES AND CONNECTIONS
+    // ============================================
+    console.log('\n📝 Creating networking profiles...');
+
+    // Create networking profile for Jane
+    await prisma.networkingProfile.upsert({
+      where: { userId: jane.id },
+      update: {},
+      create: {
+        userId: jane.id,
+        eventId: testEvent.id,
+        optIn: true,
+        interests: ["Technology", "Music", "Business", "Networking"],
+        jobTitle: "Senior Software Engineer",
+        company: "Tech Innovations Malawi",
+        bio: "Passionate about connecting tech professionals in Malawi",
+      },
+    });
+    console.log(`✅ Created networking profile for Jane`);
+
+    // Create networking profile for John
+    await prisma.networkingProfile.upsert({
+      where: { userId: john.id },
+      update: {},
+      create: {
+        userId: john.id,
+        eventId: testEvent.id,
+        optIn: true,
+        interests: ["Technology", "Business", "Startups", "Innovation"],
+        jobTitle: "Product Manager",
+        company: "Startup Malawi",
+        bio: "Looking to connect with tech innovators and entrepreneurs",
+      },
+    });
+    console.log(`✅ Created networking profile for John`);
+
+    // Create a connection between Jane and John
+    const existingConnection = await prisma.connection.findFirst({
+      where: {
+        OR: [
+          { fromUserId: jane.id, toUserId: john.id, eventId: testEvent.id },
+          { fromUserId: john.id, toUserId: jane.id, eventId: testEvent.id }
+        ]
+      }
+    });
+
+    if (!existingConnection) {
+      const connection = await prisma.connection.create({
+        data: {
+          fromUserId: jane.id,
+          toUserId: john.id,
+          eventId: testEvent.id,
+          status: 'accepted',
+          connectedAt: new Date(),
+          connectionScore: 85,
+        },
+      });
+      console.log(`✅ Created connection between Jane and John (ID: ${connection.id})`);
+
+      // Create a sample message from Jane to John
+      await prisma.message.create({
+        data: {
+          connectionId: connection.id,
+          fromUserId: jane.id,
+          toUserId: john.id,
+          eventId: testEvent.id,
+          content: "Hi John! Looking forward to meeting you at the Tech Event. Let's connect!",
+          isRead: true,
+          readAt: new Date(),
+        },
+      });
+      console.log(`✅ Created sample message from Jane to John`);
+
+      // Create a reply from John to Jane
+      await prisma.message.create({
+        data: {
+          connectionId: connection.id,
+          fromUserId: john.id,
+          toUserId: jane.id,
+          eventId: testEvent.id,
+          content: "Hi Jane! Thanks for reaching out. I'm excited to meet you too! What sessions are you planning to attend?",
+          isRead: false,
+        },
+      });
+      console.log(`✅ Created sample reply from John to Jane`);
+    }
+
+    console.log(`\n📋 Test QR Codes for Check-in:`);
+    console.log(`   1. 345879ca-a0d9-4904-b06b-5c1d832938dd`);
+    console.log(`   2. 40394c9d-fe66-4953-b86d-04aacabc8566`);
+    console.log(`   3. 8c8575cd-44d0-4285-891d-4ae1b5a80ff8`);
+    console.log(`   4. 3c6608f1-f0ae-44e6-8542-c9bec15377cf`);
+    console.log(`   5. 2384a6bf-5a61-4363-be3e-7ff7e223e23a`);
   } else {
-    console.log('⚠️ Organizer not found, skipping events creation');
+    console.log('⚠️ Organizer not found, skipping test event creation');
   }
 
   // Create sample products for merchant
@@ -550,6 +987,11 @@ async function main() {
   const productCount = await prisma.product.count();
   const linkCount = await prisma.paymentLink.count();
   const rateCount = await prisma.dsaRate.count();
+  const ticketCount = await prisma.ticket.count();
+  const orderCount = await prisma.ticketSale.count();
+  const profileCount = await prisma.networkingProfile.count();
+  const connectionCount = await prisma.connection.count();
+  const messageCount = await prisma.message.count();
 
   console.log('\n🎉 Database seeding completed successfully!');
   console.log('\n📊 Seeded Data Summary:');
@@ -559,9 +1001,14 @@ async function main() {
   console.log(`   - ${orgCount} DSA organizations`);
   console.log(`   - ${eventCount} events`);
   console.log(`   - ${tierCount} ticket tiers`);
+  console.log(`   - ${ticketCount} tickets created`);
+  console.log(`   - ${orderCount} orders created`);
   console.log(`   - ${productCount} products`);
   console.log(`   - ${linkCount} payment links`);
   console.log(`   - ${rateCount} DSA rates`);
+  console.log(`   - ${profileCount} networking profiles`);
+  console.log(`   - ${connectionCount} connections`);
+  console.log(`   - ${messageCount} messages`);
   
   console.log('\n🔑 Demo Login Credentials:');
   console.log('   Admin: admin@rapidtie.vaultstring.com / Admin@123');
@@ -570,6 +1017,25 @@ async function main() {
   console.log('   Employee: john.doe@finance.gov.mw / Employee@123');
   console.log('   Approver: approver@finance.gov.mw / Approver@123');
   console.log('   Finance Officer: finance.officer@finance.gov.mw / Finance@123');
+  console.log('   👥 Networking Test Users:');
+  console.log('   Jane: jane@email.com / Test@123');
+  console.log('   John: john@example.com / Test@123');
+
+  if (testEvent) {
+    console.log('\n🎫 Test Event Details:');
+    console.log(`   Event ID: ${testEvent.id}`);
+    console.log(`   Event Name: Updated Tech Event`);
+    console.log(`\n📝 Test Endpoints:`);
+    console.log(`   GET /api/events/${testEvent.id}/tiers`);
+    console.log(`   GET /api/organizer/events/${testEvent.id}/sales`);
+    console.log(`   GET /api/organizer/events/${testEvent.id}/attendees`);
+    console.log(`   POST /api/events/checkin`);
+    console.log(`\n🔗 Networking Endpoints:`);
+    console.log(`   GET /api/events/networking?eventId=${testEvent.id}`);
+    console.log(`   POST /api/events/networking/profile`);
+    console.log(`   GET /api/events/networking/connections`);
+    console.log(`   POST /api/events/networking/messages`);
+  }
 }
 
 main()
