@@ -1,0 +1,57 @@
+import { z } from 'zod';
+export declare const updateEventSchema: z.ZodObject<{
+    name: z.ZodOptional<z.ZodString>;
+    description: z.ZodOptional<z.ZodString>;
+    shortDescription: z.ZodOptional<z.ZodString>;
+    category: z.ZodOptional<z.ZodString>;
+    type: z.ZodOptional<z.ZodString>;
+    venue: z.ZodOptional<z.ZodString>;
+    city: z.ZodOptional<z.ZodString>;
+    country: z.ZodOptional<z.ZodString>;
+    amount: z.ZodOptional<z.ZodNumber>;
+    startDate: z.ZodOptional<z.ZodString>;
+    endDate: z.ZodOptional<z.ZodString>;
+    timezone: z.ZodOptional<z.ZodString>;
+    capacity: z.ZodOptional<z.ZodNumber>;
+    coverImage: z.ZodOptional<z.ZodString>;
+    images: z.ZodOptional<z.ZodAny>;
+    visibility: z.ZodOptional<z.ZodEnum<["public", "merchant-only", "all-platform"]>>;
+    status: z.ZodOptional<z.ZodEnum<["DRAFT", "PUBLISHED", "CANCELLED", "COMPLETED"]>>;
+}, "strip", z.ZodTypeAny, {
+    name?: string | undefined;
+    type?: string | undefined;
+    startDate?: string | undefined;
+    endDate?: string | undefined;
+    status?: "PUBLISHED" | "DRAFT" | "CANCELLED" | "COMPLETED" | undefined;
+    description?: string | undefined;
+    amount?: number | undefined;
+    shortDescription?: string | undefined;
+    category?: string | undefined;
+    venue?: string | undefined;
+    city?: string | undefined;
+    country?: string | undefined;
+    timezone?: string | undefined;
+    capacity?: number | undefined;
+    coverImage?: string | undefined;
+    images?: any;
+    visibility?: "public" | "merchant-only" | "all-platform" | undefined;
+}, {
+    name?: string | undefined;
+    type?: string | undefined;
+    startDate?: string | undefined;
+    endDate?: string | undefined;
+    status?: "PUBLISHED" | "DRAFT" | "CANCELLED" | "COMPLETED" | undefined;
+    description?: string | undefined;
+    amount?: number | undefined;
+    shortDescription?: string | undefined;
+    category?: string | undefined;
+    venue?: string | undefined;
+    city?: string | undefined;
+    country?: string | undefined;
+    timezone?: string | undefined;
+    capacity?: number | undefined;
+    coverImage?: string | undefined;
+    images?: any;
+    visibility?: "public" | "merchant-only" | "all-platform" | undefined;
+}>;
+//# sourceMappingURL=event.validation.d.ts.map

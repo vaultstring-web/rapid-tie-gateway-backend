@@ -11,6 +11,9 @@ const client_1 = require("@prisma/client");
 const server_1 = require("../server");
 const errorHandler_1 = require("../utils/errorHandler");
 const logger_1 = require("../utils/logger");
+const email_1 = require("../utils/email");
+const speakeasy_1 = __importDefault(require("speakeasy"));
+const qrcode_1 = __importDefault(require("qrcode"));
 class AuthController {
     async register(req, res, next) {
         try {
@@ -39,7 +42,7 @@ class AuthController {
                         merchant: {
                             create: {
                                 businessName: businessName || 'My Business',
-                                status: 'PENDING',
+                                status: 'ACTIVE',
                             },
                         },
                     }),
@@ -47,7 +50,7 @@ class AuthController {
                         organizer: {
                             create: {
                                 organizationName: organizationName || 'My Organization',
-                                status: 'PENDING',
+                                status: 'ACTIVE',
                             },
                         },
                     }),
@@ -58,8 +61,26 @@ class AuthController {
                 },
             });
             const verificationToken = crypto_1.default.randomBytes(32).toString('hex');
-            if (process.env.NODE_ENV === 'development') {
+            try {
+                await server_1.prisma.user.update({
+                    where: { id: user.id },
+                    data: {
+                        ...(verificationToken && { verificationToken }),
+                        ...(verificationToken && {
+                            verificationTokenExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000),
+                        }),
+                    },
+                });
+            }
+            catch (err) {
+                logger_1.logger.warn('Failed to store verification token');
+            }
+            try {
+                await (0, email_1.sendVerificationEmail)(email, verificationToken);
                 logger_1.logger.info(`Verification token for ${email}: ${verificationToken}`);
+            }
+            catch (err) {
+                logger_1.logger.error('Failed to send verification email:', err);
             }
             const token = this.generateToken(user.id);
             const refreshToken = this.generateRefreshToken(user.id);
@@ -98,9 +119,45 @@ class AuthController {
             next(error);
         }
     }
+    async verifyEmail(req, res, next) {
+        try {
+            const { token } = req.query;
+            if (!token || typeof token !== 'string') {
+                return next(new errorHandler_1.AppError('Invalid verification token', 400));
+            }
+            const user = await server_1.prisma.user.findFirst({
+                where: {
+                    verificationToken: token,
+                    verificationTokenExpiry: {
+                        gt: new Date(),
+                    },
+                },
+            });
+            if (!user) {
+                return next(new errorHandler_1.AppError('Invalid or expired token', 400));
+            }
+            await server_1.prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    emailVerified: true,
+                    verificationToken: null,
+                    verificationTokenExpiry: null,
+                },
+            });
+            await this.logActivity(user.id, 'EMAIL_VERIFIED', req);
+            res.json({
+                success: true,
+                message: 'Email verified successfully',
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
     async login(req, res, next) {
         try {
             const { email, phone, password } = req.body;
+            await this.logActivity(null, 'LOGIN_ATTEMPT', req);
             const user = await server_1.prisma.user.findFirst({
                 where: {
                     OR: [
@@ -118,13 +175,29 @@ class AuthController {
                 },
             });
             if (!user) {
-                await this.logActivity(null, 'LOGIN_FAILED', req);
+                await this.logActivity(null, 'LOGIN_FAILED_USER_NOT_FOUND', req);
                 return next(new errorHandler_1.AppError('Invalid credentials', 401));
             }
             const isValidPassword = await bcrypt_1.default.compare(password, user.password);
             if (!isValidPassword) {
                 await this.logActivity(user.id, 'LOGIN_FAILED', req);
-                return next(new errorHandler_1.AppError('Invalid credentials', 401));
+                res.status(401).json({
+                    success: false,
+                    message: 'Invalid credentials',
+                });
+                return;
+            }
+            if (!user.emailVerified) {
+                return next(new errorHandler_1.AppError('Please verify your email first', 403));
+            }
+            if (user.twoFactorEnabled) {
+                res.status(200).json({
+                    success: true,
+                    requires2FA: true,
+                    message: '2FA code required',
+                    userId: user.id,
+                });
+                return;
             }
             await server_1.prisma.user.update({
                 where: { id: user.id },
@@ -152,20 +225,95 @@ class AuthController {
                 success: true,
                 message: 'Login successful',
                 data: {
-                    user: {
-                        id: user.id,
-                        email: user.email,
-                        firstName: user.firstName,
-                        lastName: user.lastName,
-                        role: user.role,
-                        merchant: user.merchant,
-                        organizer: user.organizer,
-                        employee: user.employee,
-                        approver: user.approver,
-                        financeOfficer: user.financeOfficer,
-                        admin: user.admin,
-                    },
+                    user,
                     token,
+                    refreshToken,
+                },
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async setup2FA(req, res, next) {
+        try {
+            if (!req.user) {
+                return next(new errorHandler_1.AppError('User not found', 401));
+            }
+            const secret = speakeasy_1.default.generateSecret({
+                name: `RapidTie (${req.user.email})`,
+            });
+            await server_1.prisma.user.update({
+                where: { id: req.user.id },
+                data: {
+                    twoFactorSecret: secret.base32,
+                },
+            });
+            const qrCode = await qrcode_1.default.toDataURL(secret.otpauth_url);
+            res.json({
+                success: true,
+                data: {
+                    qrCode,
+                    secret: secret.base32,
+                },
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async verify2FA(req, res, next) {
+        try {
+            const { userId, token } = req.body;
+            if (!userId || !token) {
+                return next(new errorHandler_1.AppError('UserId and token are required', 400));
+            }
+            const user = await server_1.prisma.user.findUnique({
+                where: { id: userId },
+            });
+            if (!user || !user.twoFactorSecret) {
+                return next(new errorHandler_1.AppError('Invalid user or 2FA not setup', 400));
+            }
+            const isValid = speakeasy_1.default.totp.verify({
+                secret: user.twoFactorSecret,
+                encoding: 'base32',
+                token,
+                window: 1,
+            });
+            if (!isValid) {
+                return next(new errorHandler_1.AppError('Invalid 2FA code', 400));
+            }
+            if (!user.twoFactorEnabled) {
+                await server_1.prisma.user.update({
+                    where: { id: user.id },
+                    data: { twoFactorEnabled: true },
+                });
+                res.json({
+                    success: true,
+                    message: '2FA enabled successfully',
+                });
+                return;
+            }
+            const accessToken = this.generateToken(user.id);
+            const refreshToken = this.generateRefreshToken(user.id);
+            await server_1.prisma.session.create({
+                data: {
+                    userId: user.id,
+                    token: refreshToken,
+                    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                },
+            });
+            res.cookie('token', accessToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                maxAge: 15 * 60 * 1000,
+            });
+            res.json({
+                success: true,
+                message: '2FA login successful',
+                data: {
+                    token: accessToken,
                     refreshToken,
                 },
             });
@@ -279,25 +427,53 @@ class AuthController {
             if (!email) {
                 return next(new errorHandler_1.AppError('Email is required', 400));
             }
-            const user = await server_1.prisma.user.findUnique({ where: { email } });
+            const user = await server_1.prisma.user.findUnique({
+                where: { email },
+                select: {
+                    id: true,
+                    email: true,
+                    firstName: true,
+                }
+            });
+            await this.logActivity(user?.id || null, 'FORGOT_PASSWORD_ATTEMPT', req);
+            const message = 'If your email is registered, you will receive a reset link';
             if (!user) {
-                await this.logActivity(null, 'FORGOT_PASSWORD_ATTEMPT', req);
-                res.json({
-                    success: true,
-                    message: 'If your email is registered, you will receive a reset link',
-                });
+                res.json({ success: true, message });
+                return;
+            }
+            const recentReset = await server_1.prisma.user.findFirst({
+                where: {
+                    id: user.id,
+                    resetTokenExpiry: {
+                        gt: new Date(Date.now() - 5 * 60 * 1000),
+                    },
+                },
+            });
+            if (recentReset?.resetTokenExpiry) {
+                logger_1.logger.warn(`Rate limit hit for password reset: ${email}`);
+                res.json({ success: true, message });
                 return;
             }
             const resetToken = crypto_1.default.randomBytes(32).toString('hex');
-            const resetTokenExpiry = new Date(Date.now() + 3600000);
-            if (process.env.NODE_ENV === 'development') {
-                logger_1.logger.info(`Password reset token for ${email}: ${resetToken}`);
-                logger_1.logger.info(`Token expires at: ${resetTokenExpiry.toISOString()}`);
-            }
-            res.json({
-                success: true,
-                message: 'If your email is registered, you will receive a reset link',
+            const resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000);
+            await server_1.prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    resetToken,
+                    resetTokenExpiry,
+                },
             });
+            try {
+                await (0, email_1.sendVerificationEmail)(user.email, resetToken, 'RESET', user.firstName || undefined);
+                logger_1.logger.info(`Password reset email sent to ${user.email}`);
+            }
+            catch (emailError) {
+                logger_1.logger.error('Failed to send reset email:', emailError);
+                if (process.env.NODE_ENV === 'development') {
+                    console.log(`\n⚠️ Email sending failed. Reset token for ${user.email}: ${resetToken}\n`);
+                }
+            }
+            res.json({ success: true, message });
         }
         catch (error) {
             next(error);
@@ -312,14 +488,89 @@ class AuthController {
             if (password.length < 8) {
                 return next(new errorHandler_1.AppError('Password must be at least 8 characters', 400));
             }
-            if (process.env.NODE_ENV === 'development') {
-                logger_1.logger.info(`Resetting password with token: ${token}`);
+            const passwordValidation = this.validatePasswordStrength(password);
+            if (!passwordValidation.isValid) {
+                return next(new errorHandler_1.AppError(passwordValidation.message, 400));
             }
-            res.json({ success: true, message: 'Password reset successful' });
+            const user = await server_1.prisma.user.findFirst({
+                where: {
+                    resetToken: token,
+                    resetTokenExpiry: {
+                        gt: new Date(),
+                    },
+                },
+            });
+            if (!user) {
+                await this.logActivity(null, 'PASSWORD_RESET_FAILED_INVALID_TOKEN', req);
+                return next(new errorHandler_1.AppError('Invalid or expired reset token', 400));
+            }
+            if (user.passwordResetAt &&
+                user.passwordResetAt > new Date(Date.now() - 5 * 60 * 1000)) {
+                await this.logActivity(user.id, 'PASSWORD_RESET_RAPID_ATTEMPT', req);
+                return next(new errorHandler_1.AppError('Please wait before trying again', 429));
+            }
+            const hashedPassword = await bcrypt_1.default.hash(password, 12);
+            await server_1.prisma.$transaction(async (tx) => {
+                await tx.user.update({
+                    where: { id: user.id },
+                    data: {
+                        password: hashedPassword,
+                        passwordChangedAt: new Date(),
+                        passwordResetAt: new Date(),
+                        resetToken: null,
+                        resetTokenExpiry: null,
+                    },
+                });
+                await tx.session.deleteMany({
+                    where: { userId: user.id },
+                });
+                await tx.activityLog.create({
+                    data: {
+                        userId: user.id,
+                        action: 'PASSWORD_RESET_SUCCESS',
+                        entity: 'User',
+                        entityId: user.id,
+                        ipAddress: req.ip,
+                        userAgent: req.headers['user-agent'],
+                        newValue: { timestamp: new Date().toISOString() },
+                    },
+                });
+            });
+            try {
+                await (0, email_1.sendVerificationEmail)(user.email, '', 'RESET_CONFIRMATION', user.firstName || undefined);
+            }
+            catch (emailError) {
+                logger_1.logger.error('Failed to send reset confirmation email:', emailError);
+            }
+            logger_1.logger.info(`Password reset successful for user: ${user.email} | UserId: ${user.id} | IP: ${req.ip}`);
+            res.json({
+                success: true,
+                message: 'Password reset successful. Please login with your new password.'
+            });
         }
         catch (error) {
             next(error);
         }
+    }
+    validatePasswordStrength(password) {
+        const checks = {
+            minLength: password.length >= 8,
+            hasUppercase: /[A-Z]/.test(password),
+            hasLowercase: /[a-z]/.test(password),
+            hasNumber: /\d/.test(password),
+            hasSpecialChar: /[^a-zA-Z0-9]/.test(password),
+        };
+        if (!checks.minLength) {
+            return { isValid: false, message: 'Password must be at least 8 characters' };
+        }
+        const passedChecks = Object.values(checks).filter(Boolean).length;
+        if (passedChecks < 3) {
+            return {
+                isValid: false,
+                message: 'Password must contain at least 3 of the following: uppercase letters, lowercase letters, numbers, special characters'
+            };
+        }
+        return { isValid: true, message: '' };
     }
     async logActivity(userId, action, req) {
         try {
@@ -355,6 +606,40 @@ class AuthController {
         }
         const expiresIn = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
         return jsonwebtoken_1.default.sign({ id: userId, type: 'refresh' }, secret, { expiresIn });
+    }
+    async resendVerification(req, res, next) {
+        try {
+            const { email } = req.body;
+            if (!email) {
+                return next(new errorHandler_1.AppError('Email is required', 400));
+            }
+            const user = await server_1.prisma.user.findUnique({
+                where: { email },
+            });
+            if (!user) {
+                return next(new errorHandler_1.AppError('User not found', 404));
+            }
+            if (user.emailVerified) {
+                return next(new errorHandler_1.AppError('Email already verified', 400));
+            }
+            const verificationToken = crypto_1.default.randomBytes(32).toString('hex');
+            const verificationTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            await server_1.prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    verificationToken,
+                    verificationTokenExpiry,
+                },
+            });
+            await (0, email_1.sendVerificationEmail)(user.email, verificationToken, 'VERIFICATION', user.firstName || undefined);
+            res.json({
+                success: true,
+                message: 'Verification email sent successfully',
+            });
+        }
+        catch (error) {
+            next(error);
+        }
     }
 }
 exports.AuthController = AuthController;

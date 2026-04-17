@@ -14,6 +14,14 @@ router.post('/register', async (req, res, next) => {
         next(error);
     }
 });
+router.post('/verify-email', async (req, res, next) => {
+    try {
+        await authController.verifyEmail(req, res, next);
+    }
+    catch (error) {
+        next(error);
+    }
+});
 router.post('/login', rateLimiter_1.loginRateLimiter, async (req, res, next) => {
     try {
         await authController.login(req, res, next);
@@ -22,7 +30,7 @@ router.post('/login', rateLimiter_1.loginRateLimiter, async (req, res, next) => 
         next(error);
     }
 });
-router.post('/forgot-password', async (req, res, next) => {
+router.post('/forgot-password', rateLimiter_1.forgotPasswordLimiter, async (req, res, next) => {
     try {
         await authController.forgotPassword(req, res, next);
     }
@@ -77,5 +85,9 @@ router.get('/test', (_req, res) => {
         timestamp: new Date().toISOString()
     });
 });
+router.get('/verify', authController.verifyEmail.bind(authController));
+router.post('/resend-verification', authController.resendVerification);
+router.post('/2fa/setup', authController.setup2FA);
+router.post('/2fa/verify', authController.verify2FA);
 exports.default = router;
 //# sourceMappingURL=auth.routes.js.map

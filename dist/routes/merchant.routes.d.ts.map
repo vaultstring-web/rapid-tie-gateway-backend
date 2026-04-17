@@ -1,1 +1,1 @@
-{"version":3,"file":"merchant.routes.d.ts","sourceRoot":"","sources":["../../src/routes/merchant.routes.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,MAAM,EAAE,MAAM,SAAS,CAAC;AAEjC,QAAA,MAAM,MAAM,EAAE,MAAiB,CAAC;AAMhC,eAAe,MAAM,CAAC"}
+{"version":3,"file":"merchant.routes.d.ts","sourceRoot":"","sources":["../../src/routes/merchant.routes.ts"],"names":[],"mappings":"AACA,OAAO,EAAE,MAAM,EAAE,MAAM,SAAS,CAAC;AAoBjC,QAAA,MAAM,MAAM,EAAE,MAAiB,CAAC;AAwEhC,eAAe,MAAM,CAAC"}

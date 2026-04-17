@@ -75,6 +75,7 @@ app.use('/api/admin', admin_routes_1.default);
 app.use('/api/events', event_routes_1.default);
 app.use('/api/payments', payment_routes_1.default);
 app.use('/api/webhooks', webhook_routes_1.default);
+app.use('/api/organizer', organizer_routes_1.default);
 app.use(notfound_1.notfound);
 app.use(errorHandler_1.errorHandler);
 io.on('connection', (socket) => {
