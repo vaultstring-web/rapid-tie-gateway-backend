@@ -1,0 +1,21 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const auth_1 = require("../middlewares/auth");
+const notification_controller_1 = require("../controllers/notification.controller");
+const router = (0, express_1.Router)();
+router.use(auth_1.authenticate);
+router.get('/', notification_controller_1.getNotifications);
+router.get('/digest', notification_controller_1.getNotificationDigest);
+router.post('/reminders', notification_controller_1.sendEventReminders);
+router.post('/event', notification_controller_1.sendEventNotification);
+router.put('/read-all', notification_controller_1.markAllAsRead);
+router.put('/:id/read', notification_controller_1.markAsRead);
+router.delete('/', notification_controller_1.deleteAllRead);
+router.delete('/:id', notification_controller_1.deleteNotification);
+router.get('/preferences', notification_controller_1.getNotificationPreferences);
+router.put('/preferences', notification_controller_1.updateNotificationPreferences);
+router.get('/users/notification-preferences', notification_controller_1.getNotificationPreferences);
+router.put('/users/notification-preferences', notification_controller_1.updateNotificationPreferences);
+exports.default = router;
+//# sourceMappingURL=notification.routes.js.map

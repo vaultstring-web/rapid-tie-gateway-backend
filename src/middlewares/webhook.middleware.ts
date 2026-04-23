@@ -29,7 +29,7 @@ export const verifyWebhookSignature = (provider: string) => {
       return res.status(401).json({ error: 'Invalid signature' });
     }
 
-    next();
+    return next();
   };
 };
 

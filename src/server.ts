@@ -3,14 +3,18 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
-import cookieParser from 'cookie-parser'; // Fixed: changed 'cookieParser' to 'cookie-parser'
+import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server as SocketServer } from 'socket.io';
 import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
+import { logger } from './utils/logger';
+import { errorHandler } from './utils/errorHandler';
+import { notfound } from './middlewares/notfound';
 import attendeesRoutes from './routes/attendees.routes';
+
 // Load environment variables
 dotenv.config();
 
@@ -44,16 +48,12 @@ import adminTransactionRoutes from './routes/admin/transactionMonitor.routes';
 import adminSecurityRoutes from './routes/admin/securityDashboard.routes';
 import adminAuditRoutes from './routes/admin/auditLog.routes';
 import adminFraudRoutes from './routes/admin/fraudDetection.routes';
+
 // Import transaction monitor WebSocket functions
 import { 
   addMonitorConnection, 
   removeMonitorConnection,
 } from './controllers/admin/transactionMonitor.controller';
-
-// Import middleware
-import { errorHandler } from './utils/errorHandler';
-import { notfound } from './middlewares/notfound';
-import { logger } from './utils/logger';
 
 // Initialize Express
 const app: Application = express();
@@ -127,6 +127,7 @@ app.use('/api/admin', adminTransactionRoutes);
 app.use('/api/admin', adminSecurityRoutes);
 app.use('/api/admin', adminAuditRoutes);
 app.use('/api/admin', adminFraudRoutes);
+
 // Initialize recurring jobs after server starts
 initializeRecurringJobs().catch(console.error);
 
@@ -160,7 +161,6 @@ io.on('connection', (socket) => {
         socket.join(`user-${user.id}`);
         logger.info(`User ${user.email} authenticated for notifications`);
         
-        // Send unread count on connect
         const unreadCount = await prisma.notification.count({
           where: { userId: user.id, read: false },
         });
@@ -173,13 +173,11 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Join notifications room
   socket.on('join-notifications', (userId: string) => {
     socket.join(`user-${userId}`);
     logger.info(`Client ${socket.id} joined notifications for user ${userId}`);
   });
 
-  // Join event rooms for real-time sales updates
   socket.on('join-event-sales', async (eventId: string) => {
     socket.join(`event-${eventId}`);
     logger.info(`Client ${socket.id} joined event-${eventId} sales room`);
@@ -218,7 +216,6 @@ io.on('connection', (socket) => {
     logger.info(`Client ${socket.id} left event-${eventId} sales room`);
   });
 
-  // Handle real-time mark as read
   socket.on('mark-read', async (notificationId: string) => {
     try {
       await prisma.notification.update({
@@ -281,7 +278,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// Function to emit sales updates (can be called from other parts of the app)
+// Function to emit sales updates
 const emitSalesUpdate = async (eventId: string) => {
   try {
     const sales = await prisma.ticketSale.findMany({

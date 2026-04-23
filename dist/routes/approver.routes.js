@@ -1,9 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
+const auth_1 = require("../middlewares/auth");
+const validate_1 = require("../middlewares/validate");
+const approver_controller_1 = require("../controllers/approver.controller");
+const approver_validators_1 = require("../validators/approver.validators");
 const router = (0, express_1.Router)();
-router.get('/test', (_req, res) => {
-    res.json({ message: 'Approver route working!' });
-});
+const approverController = new approver_controller_1.ApproverController();
+router.use(auth_1.authenticate, (0, auth_1.authorize)('APPROVER'));
+router.get('/dashboard', (req, res, next) => approverController.getDashboard(req, res, next));
+router.get('/requests', (0, validate_1.validate)(approver_validators_1.requestsQuerySchema), (req, res, next) => approverController.getAllRequests(req, res, next));
+router.get('/pending', (0, validate_1.validate)(approver_validators_1.pendingApprovalsQuerySchema), (req, res, next) => approverController.getPending(req, res, next));
+router.get('/requests/:id', (req, res, next) => approverController.getDetail(req, res, next));
+router.post('/requests/:id/approve', (req, res, next) => approverController.processAction('approve')(req, res, next));
+router.post('/requests/:id/reject', (req, res, next) => approverController.processAction('reject')(req, res, next));
+router.get('/profile', (req, res, next) => approverController.getProfile(req, res, next));
+router.put('/profile', (req, res, next) => approverController.updateProfile(req, res, next));
 exports.default = router;
 //# sourceMappingURL=approver.routes.js.map

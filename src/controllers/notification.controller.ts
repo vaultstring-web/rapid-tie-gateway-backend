@@ -1,651 +1,513 @@
-// controllers/notification.controller.ts
-import { Response } from 'express';
-import { AuthRequest } from '../middlewares/auth';
+// src/controllers/notification.controller.ts
+import { Response, NextFunction } from 'express';
 import { prisma } from '../server';
+import { AuthRequest } from '../middlewares/auth';
+import { AppError } from '../utils/errorHandler';
 
 // Cache for notifications
 const notificationCache = new Map<string, { data: any; expiresAt: number }>();
 const CACHE_DURATION = 30 * 1000; // 30 seconds
 
-// WebSocket io instance (will be set from server)
+// WebSocket io instance
 let io: any;
 
 export const setIoInstance = (ioInstance: any) => {
   io = ioInstance;
 };
 
-// Get user's notifications
-export const getNotifications = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user;
-    if (!user) {
-      res.status(401).json({ success: false, message: 'Authentication required' });
-      return;
-    }
+export class NotificationController {
+  /**
+   * GET /api/notifications
+   * List all notifications for the authenticated user.
+   */
+  async list(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) return next(new AppError('Unauthorized', 401));
 
-    const { limit = 50, offset = 0, unreadOnly = false } = req.query;
-    
-    const cacheKey = `notifications_${user.id}_${limit}_${offset}_${unreadOnly}`;
-    const cached = notificationCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      res.status(200).json({ success: true, data: cached.data, cached: true });
-      return;
-    }
-
-    const where: any = { userId: user.id };
-    if (unreadOnly === 'true') {
-      where.read = false;
-    }
-
-    const notifications = await prisma.notification.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: parseInt(limit as string),
-      skip: parseInt(offset as string),
-    });
-
-    const unreadCount = await prisma.notification.count({
-      where: { userId: user.id, read: false },
-    });
-
-    const response = {
-      notifications,
-      unreadCount,
-      pagination: {
-        limit: parseInt(limit as string),
-        offset: parseInt(offset as string),
-        total: await prisma.notification.count({ where }),
-      },
-    };
-
-    notificationCache.set(cacheKey, {
-      data: response,
-      expiresAt: Date.now() + CACHE_DURATION,
-    });
-
-    res.status(200).json({ success: true, data: response, cached: false });
-  } catch (error) {
-    console.error('Get notifications error:', error);
-    res.status(500).json({ success: false, message: 'Failed to get notifications' });
-  }
-};
-
-// Mark notification as read
-export const markAsRead = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user;
-    if (!user) {
-      res.status(401).json({ success: false, message: 'Authentication required' });
-      return;
-    }
-
-    const { id } = req.params;
-
-    const notification = await prisma.notification.findFirst({
-      where: { id, userId: user.id },
-    });
-
-    if (!notification) {
-      res.status(404).json({ success: false, message: 'Notification not found' });
-      return;
-    }
-
-    const updated = await prisma.notification.update({
-      where: { id },
-      data: { read: true, readAt: new Date() },
-    });
-
-    // Clear cache
-    notificationCache.clear();
-
-    res.status(200).json({ success: true, data: updated });
-  } catch (error) {
-    console.error('Mark as read error:', error);
-    res.status(500).json({ success: false, message: 'Failed to mark as read' });
-  }
-};
-
-// Mark all notifications as read
-export const markAllAsRead = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user;
-    if (!user) {
-      res.status(401).json({ success: false, message: 'Authentication required' });
-      return;
-    }
-
-    await prisma.notification.updateMany({
-      where: { userId: user.id, read: false },
-      data: { read: true, readAt: new Date() },
-    });
-
-    notificationCache.clear();
-
-    res.status(200).json({ success: true, message: 'All notifications marked as read' });
-  } catch (error) {
-    console.error('Mark all as read error:', error);
-    res.status(500).json({ success: false, message: 'Failed to mark all as read' });
-  }
-};
-
-// Delete notification
-export const deleteNotification = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user;
-    if (!user) {
-      res.status(401).json({ success: false, message: 'Authentication required' });
-      return;
-    }
-
-    const { id } = req.params;
-
-    const notification = await prisma.notification.findFirst({
-      where: { id, userId: user.id },
-    });
-
-    if (!notification) {
-      res.status(404).json({ success: false, message: 'Notification not found' });
-      return;
-    }
-
-    await prisma.notification.delete({ where: { id } });
-
-    notificationCache.clear();
-
-    res.status(200).json({ success: true, message: 'Notification deleted' });
-  } catch (error) {
-    console.error('Delete notification error:', error);
-    res.status(500).json({ success: false, message: 'Failed to delete notification' });
-  }
-};
-
-// Create notification (internal use)
-export const createNotification = async (
-  userId: string,
-  type: string,
-  title: string,
-  message: string,
-  data?: any
-): Promise<void> => {
-  try {
-    const notification = await prisma.notification.create({
-      data: {
-        userId,
-        type,
-        title,
-        message,
-        data: data || {},
-      },
-    });
-
-    // Clear cache
-    notificationCache.clear();
-
-    // Send real-time notification via WebSocket
-    if (io) {
-      io.to(`user-${userId}`).emit('new-notification', notification);
-    }
-
-    console.log(`📧 Notification sent to ${userId}: ${title}`);
-  } catch (error) {
-    console.error('Create notification error:', error);
-  }
-};
-
-// Send event reminder notifications
-export const sendEventReminders = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user;
-    if (!user) {
-      res.status(401).json({ success: false, message: 'Authentication required' });
-      return;
-    }
-
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const nextWeek = new Date();
-    nextWeek.setDate(nextWeek.getDate() + 7);
-
-    // Get user's upcoming tickets
-    const tickets = await prisma.ticket.findMany({
-      where: {
-        order: { customerEmail: user.email },
-        event: {
-          startDate: { gte: new Date(), lte: nextWeek },
-        },
-      },
-      include: { event: true },
-    });
-
-    const reminders = [];
-    for (const ticket of tickets) {
-      const daysUntil = Math.ceil((ticket.event.startDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+      const { page = '1', limit = '20', unreadOnly, offset } = req.query as Record<string, string>;
       
-      let reminderType = '';
-      let title = '';
-      let message = '';
-
-      if (daysUntil === 1) {
-        reminderType = 'event_tomorrow';
-        title = 'Event Tomorrow! 🎉';
-        message = `Your event "${ticket.event.name}" is tomorrow at ${new Date(ticket.event.startDate).toLocaleTimeString()}`;
-      } else if (daysUntil <= 7 && daysUntil > 1) {
-        reminderType = 'event_soon';
-        title = `Event Coming Soon: ${ticket.event.name}`;
-        message = `Your event starts in ${daysUntil} days. Get ready!`;
+      // Support both page-based and limit/offset pagination
+      const take = parseInt(limit, 10);
+      const skip = offset ? parseInt(offset, 10) : (parseInt(page, 10) - 1) * take;
+      
+      const cacheKey = `notifications_${user.id}_${take}_${skip}_${unreadOnly}`;
+      const cached = notificationCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        res.json({ success: true, data: cached.data, cached: true });
+        return;
       }
 
-      if (reminderType) {
-        const existing = await prisma.notification.findFirst({
-          where: {
-            userId: user.id,
-            type: reminderType,
-            data: { path: ['eventId'], equals: ticket.event.id },
-          },
-        });
+      const where: any = { userId: user.id };
+      if (unreadOnly === 'true') where.read = false;
 
-        if (!existing) {
-          await createNotification(
-            user.id,
-            reminderType,
-            title,
-            message,
-            { eventId: ticket.event.id, eventName: ticket.event.name, daysUntil }
-          );
-          reminders.push({ eventId: ticket.event.id, daysUntil });
+      const [notifications, total, unreadCount] = await Promise.all([
+        prisma.notification.findMany({
+          where,
+          orderBy: [{ read: 'asc' }, { createdAt: 'desc' }],
+          skip,
+          take,
+        }),
+        prisma.notification.count({ where }),
+        prisma.notification.count({ where: { userId: user.id, read: false } }),
+      ]);
+
+      const data = {
+        notifications,
+        unreadCount,
+        pagination: {
+          total,
+          page: Math.floor(skip / take) + 1,
+          perPage: take,
+          totalPages: Math.ceil(total / take),
+          limit: take,
+          offset: skip,
+        },
+      };
+
+      notificationCache.set(cacheKey, {
+        data,
+        expiresAt: Date.now() + CACHE_DURATION,
+      });
+
+      res.json({ success: true, data, cached: false });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
+   * PUT /api/notifications/:id/read
+   * Mark a single notification as read.
+   */
+  async markRead(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) return next(new AppError('Unauthorized', 401));
+
+      const { id } = req.params;
+      const notification = await prisma.notification.findFirst({
+        where: { id, userId: req.user.id },
+      });
+
+      if (!notification) return next(new AppError('Notification not found', 404));
+
+      const updated = await prisma.notification.update({
+        where: { id },
+        data: { read: true, readAt: new Date() },
+      });
+
+      notificationCache.clear();
+      res.json({ success: true, data: updated });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
+   * PUT /api/notifications/read-all
+   * Mark all notifications as read for the current user.
+   */
+  async markAllRead(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) return next(new AppError('Unauthorized', 401));
+
+      const { count } = await prisma.notification.updateMany({
+        where: { userId: req.user.id, read: false },
+        data: { read: true, readAt: new Date() },
+      });
+
+      notificationCache.clear();
+      res.json({ success: true, data: { updatedCount: count } });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
+   * DELETE /api/notifications/:id
+   * Delete a single notification.
+   */
+  async deleteOne(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) return next(new AppError('Unauthorized', 401));
+
+      const { id } = req.params;
+      const notification = await prisma.notification.findFirst({
+        where: { id, userId: req.user.id },
+      });
+
+      if (!notification) return next(new AppError('Notification not found', 404));
+
+      await prisma.notification.delete({ where: { id } });
+
+      notificationCache.clear();
+      res.json({ success: true, message: 'Notification deleted' });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
+   * DELETE /api/notifications
+   * Delete all read notifications for the current user.
+   */
+  async deleteAllRead(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) return next(new AppError('Unauthorized', 401));
+
+      const { count } = await prisma.notification.deleteMany({
+        where: { userId: req.user.id, read: true },
+      });
+
+      notificationCache.clear();
+      res.json({ success: true, data: { deletedCount: count } });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
+   * Create notification (internal use)
+   */
+  async createNotification(
+    userId: string,
+    type: string,
+    title: string,
+    message: string,
+    data?: any
+  ): Promise<void> {
+    try {
+      const notification = await prisma.notification.create({
+        data: {
+          userId,
+          type,
+          title,
+          message,
+          data: data || {},
+        },
+      });
+
+      notificationCache.clear();
+
+      if (io) {
+        io.to(`user-${userId}`).emit('new-notification', notification);
+      }
+    } catch (error) {
+      console.error('Create notification error:', error);
+    }
+  }
+
+  /**
+   * POST /api/notifications/reminders
+   * Send event reminder notifications
+   */
+  async sendEventReminders(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) return next(new AppError('Unauthorized', 401));
+
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const nextWeek = new Date();
+      nextWeek.setDate(nextWeek.getDate() + 7);
+
+      // Get user's upcoming tickets
+      const tickets = await prisma.ticket.findMany({
+        where: {
+          attendeeEmail: user.email,
+          event: {
+            startDate: { gte: new Date(), lte: nextWeek },
+          },
+        },
+        include: { event: true },
+      });
+
+      const reminders = [];
+      for (const ticket of tickets) {
+        const daysUntil = Math.ceil((ticket.event.startDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        
+        let reminderType = '';
+        let title = '';
+        let message = '';
+
+        if (daysUntil === 1) {
+          reminderType = 'event_tomorrow';
+          title = 'Event Tomorrow! 🎉';
+          message = `Your event "${ticket.event.name}" is tomorrow at ${new Date(ticket.event.startDate).toLocaleTimeString()}`;
+        } else if (daysUntil <= 7 && daysUntil > 1) {
+          reminderType = 'event_soon';
+          title = `Event Coming Soon: ${ticket.event.name}`;
+          message = `Your event starts in ${daysUntil} days. Get ready!`;
+        }
+
+        if (reminderType) {
+          const existing = await prisma.notification.findFirst({
+            where: {
+              userId: user.id,
+              type: reminderType,
+              data: { path: ['eventId'], equals: ticket.event.id },
+            },
+          });
+
+          if (!existing) {
+            await this.createNotification(
+              user.id,
+              reminderType,
+              title,
+              message,
+              { eventId: ticket.event.id, eventName: ticket.event.name, daysUntil }
+            );
+            reminders.push({ eventId: ticket.event.id, daysUntil });
+          }
         }
       }
-    }
 
-    res.status(200).json({
-      success: true,
-      message: `Sent ${reminders.length} reminders`,
-      data: reminders,
-    });
-  } catch (error) {
-    console.error('Send event reminders error:', error);
-    res.status(500).json({ success: false, message: 'Failed to send reminders' });
+      res.status(200).json({
+        success: true,
+        message: `Sent ${reminders.length} reminders`,
+        data: reminders,
+      });
+    } catch (error) {
+      next(error);
+    }
   }
-};
 
-// Send bulk notification to event attendees
-export const sendEventNotification = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user;
-    if (!user) {
-      res.status(401).json({ success: false, message: 'Authentication required' });
-      return;
+  /**
+   * POST /api/notifications/event
+   * Send bulk notification to event attendees
+   */
+  async sendEventNotification(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) return next(new AppError('Unauthorized', 401));
+
+      const { eventId, title, message, type = 'event_update' } = req.body;
+
+      if (!eventId || !title || !message) {
+        return next(new AppError('Event ID, title, and message are required', 400));
+      }
+
+      // Check if user is organizer of this event
+      const event = await prisma.event.findUnique({
+        where: { id: eventId },
+        include: { organizer: true },
+      });
+
+      if (!event || event.organizer.userId !== user.id) {
+        return next(new AppError('Unauthorized to send notifications for this event', 403));
+      }
+
+      // Get all ticket buyers for this event
+      const tickets = await prisma.ticket.findMany({
+        where: { eventId },
+        select: { attendeeEmail: true },
+      });
+
+      const uniqueUserEmails = [...new Set(tickets.map(t => t.attendeeEmail))];
+      
+      // Get user IDs from emails
+      const users = await prisma.user.findMany({
+        where: { email: { in: uniqueUserEmails } },
+        select: { id: true },
+      });
+
+      let sentCount = 0;
+      for (const attendee of users) {
+        await this.createNotification(
+          attendee.id,
+          type,
+          title,
+          message,
+          { eventId, eventName: event.name, senderId: user.id }
+        );
+        sentCount++;
+      }
+
+      res.status(200).json({
+        success: true,
+        message: `Notification sent to ${sentCount} attendees`,
+        data: { eventId, sentCount },
+      });
+    } catch (error) {
+      next(error);
     }
-
-    const { eventId, title, message, type = 'event_update' } = req.body;
-
-    if (!eventId || !title || !message) {
-      res.status(400).json({ success: false, message: 'Event ID, title, and message are required' });
-      return;
-    }
-
-    // Check if user is organizer of this event
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-      include: { organizer: true },
-    });
-
-    if (!event || event.organizer.userId !== user.id) {
-      res.status(403).json({ success: false, message: 'Unauthorized to send notifications for this event' });
-      return;
-    }
-
-    // Get all ticket buyers for this event
-    const tickets = await prisma.ticket.findMany({
-      where: { eventId },
-      include: { order: true },
-    });
-
-    const uniqueUserEmails = [...new Set(tickets.map(t => t.order.customerEmail))];
-    
-    // Get user IDs from emails
-    const users = await prisma.user.findMany({
-      where: { email: { in: uniqueUserEmails } },
-    });
-
-    let sentCount = 0;
-    for (const attendee of users) {
-      await createNotification(
-        attendee.id,
-        type,
-        title,
-        message,
-        { eventId, eventName: event.name, senderId: user.id }
-      );
-      sentCount++;
-    }
-
-    res.status(200).json({
-      success: true,
-      message: `Notification sent to ${sentCount} attendees`,
-      data: { eventId, sentCount },
-    });
-  } catch (error) {
-    console.error('Send event notification error:', error);
-    res.status(500).json({ success: false, message: 'Failed to send notifications' });
   }
-};
 
-// Get notification preferences
-export const getPreferences = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user;
-    if (!user) {
-      res.status(401).json({ success: false, message: 'Authentication required' });
-      return;
+  /**
+   * GET /api/users/notification-preferences
+   */
+  async getPreferences(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) return next(new AppError('Unauthorized', 401));
+
+      let preferences = await prisma.notificationPreferences.findUnique({
+        where: { userId: user.id },
+      });
+
+      if (!preferences) {
+        preferences = await prisma.notificationPreferences.create({
+          data: {
+            userId: user.id,
+            emailNotifications: true,
+            pushNotifications: true,
+            eventReminders: true,
+            connectionRequests: true,
+            messages: true,
+            promotions: false,
+          },
+        });
+      }
+
+      res.status(200).json({ success: true, data: preferences });
+    } catch (error) {
+      next(error);
     }
+  }
 
-    // Get or create notification preferences
-    let preferences = await prisma.notificationPreferences.findUnique({
-      where: { userId: user.id },
-    });
+  /**
+   * PUT /api/users/notification-preferences
+   */
+  async updatePreferences(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) return next(new AppError('Unauthorized', 401));
 
-    if (!preferences) {
-      preferences = await prisma.notificationPreferences.create({
-        data: {
+      const preferences = await prisma.notificationPreferences.upsert({
+        where: { userId: user.id },
+        update: req.body,
+        create: {
           userId: user.id,
-          emailNotifications: true,
-          pushNotifications: true,
-          eventReminders: true,
-          connectionRequests: true,
-          messages: true,
-          promotions: false,
+          ...req.body,
         },
       });
-    }
 
-    res.status(200).json({ success: true, data: preferences });
-  } catch (error) {
-    console.error('Get preferences error:', error);
-    res.status(500).json({ success: false, message: 'Failed to get preferences' });
+      res.status(200).json({ success: true, data: preferences });
+    } catch (error) {
+      next(error);
+    }
   }
-};
 
-// Update notification preferences
-export const updatePreferences = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user;
-    if (!user) {
-      res.status(401).json({ success: false, message: 'Authentication required' });
-      return;
+  /**
+   * Check if notification should be sent based on quiet hours
+   */
+  async shouldSendNotification(userId: string): Promise<boolean> {
+    try {
+      const preferences = await prisma.notificationPreferences.findUnique({
+        where: { userId },
+      });
+
+      if (!preferences || !preferences.quietHoursEnabled) return true;
+
+      const now = new Date();
+      const currentHour = now.getHours();
+      const currentMinute = now.getMinutes();
+      const currentTime = `${currentHour.toString().padStart(2, '0')}:${currentMinute.toString().padStart(2, '0')}`;
+
+      const start = preferences.quietHoursStart || '22:00';
+      const end = preferences.quietHoursEnd || '08:00';
+
+      if (start > end) {
+        return !(currentTime >= start || currentTime <= end);
+      } else {
+        return !(currentTime >= start && currentTime <= end);
+      }
+    } catch (error) {
+      console.error('Should send notification error:', error);
+      return true;
     }
-
-    const { emailNotifications, pushNotifications, eventReminders, connectionRequests, messages, promotions } = req.body;
-
-    const preferences = await prisma.notificationPreferences.upsert({
-      where: { userId: user.id },
-      update: {
-        emailNotifications: emailNotifications !== undefined ? emailNotifications : undefined,
-        pushNotifications: pushNotifications !== undefined ? pushNotifications : undefined,
-        eventReminders: eventReminders !== undefined ? eventReminders : undefined,
-        connectionRequests: connectionRequests !== undefined ? connectionRequests : undefined,
-        messages: messages !== undefined ? messages : undefined,
-        promotions: promotions !== undefined ? promotions : undefined,
-      },
-      create: {
-        userId: user.id,
-        emailNotifications: emailNotifications !== undefined ? emailNotifications : true,
-        pushNotifications: pushNotifications !== undefined ? pushNotifications : true,
-        eventReminders: eventReminders !== undefined ? eventReminders : true,
-        connectionRequests: connectionRequests !== undefined ? connectionRequests : true,
-        messages: messages !== undefined ? messages : true,
-        promotions: promotions !== undefined ? promotions : false,
-      },
-    });
-
-    res.status(200).json({ success: true, data: preferences });
-  } catch (error) {
-    console.error('Update preferences error:', error);
-    res.status(500).json({ success: false, message: 'Failed to update preferences' });
   }
-};
-// Get notification preferences
-export const getNotificationPreferences = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user;
-    if (!user) {
-      res.status(401).json({ success: false, message: 'Authentication required' });
-      return;
-    }
 
-    let preferences = await prisma.notificationPreferences.findUnique({
-      where: { userId: user.id },
-    });
+  /**
+   * GET /api/notifications/digest
+   */
+  async getDigest(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) return next(new AppError('Unauthorized', 401));
 
-    if (!preferences) {
-      // Create default preferences
-      preferences = await prisma.notificationPreferences.create({
-        data: {
+      const preferences = await prisma.notificationPreferences.findUnique({
+        where: { userId: user.id },
+      });
+
+      const digestFrequency = preferences?.digestFrequency || 'daily';
+      const digestTime = preferences?.digestTime || '09:00';
+      
+      let startDate: Date;
+      const now = new Date();
+
+      switch (digestFrequency) {
+        case 'daily':
+          startDate = new Date(now);
+          startDate.setDate(now.getDate() - 1);
+          break;
+        case 'weekly':
+          startDate = new Date(now);
+          startDate.setDate(now.getDate() - 7);
+          break;
+        default:
+          startDate = new Date(0);
+      }
+
+      const notifications = await prisma.notification.findMany({
+        where: {
           userId: user.id,
-          emailNotifications: true,
-          emailDigest: 'daily',
-          pushNotifications: true,
-          eventReminders: true,
-          eventRecommendations: true,
-          connectionRequests: true,
-          messages: true,
-          promotions: false,
-          paymentConfirmations: true,
-          eventUpdates: true,
-          quietHoursEnabled: false,
-          quietHoursStart: '22:00',
-          quietHoursEnd: '08:00',
-          quietHoursTimezone: 'Africa/Blantyre',
-          digestFrequency: 'daily',
-          digestTime: '09:00',
-          notifyBeforeEvent: 24,
-          maxNotificationsPerDay: 50,
+          createdAt: { gte: startDate },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const groupedByType = notifications.reduce((acc, notif) => {
+        const type = notif.type;
+        if (!acc[type]) acc[type] = [];
+        acc[type].push(notif);
+        return acc;
+      }, {} as Record<string, any[]>);
+
+      res.status(200).json({
+        success: true,
+        data: {
+          frequency: digestFrequency,
+          digestTime,
+          period: { start: startDate, end: now },
+          summary: {
+            total: notifications.length,
+            unread: notifications.filter(n => !n.read).length,
+            byType: Object.keys(groupedByType).map(type => ({
+              type,
+              count: groupedByType[type].length,
+            })),
+          },
+          notifications: notifications.slice(0, 50),
         },
       });
+    } catch (error) {
+      next(error);
     }
-
-    res.status(200).json({ success: true, data: preferences });
-  } catch (error) {
-    console.error('Get preferences error:', error);
-    res.status(500).json({ success: false, message: 'Failed to get preferences' });
   }
-};
+}
 
-// Update notification preferences
-export const updateNotificationPreferences = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user;
-    if (!user) {
-      res.status(401).json({ success: false, message: 'Authentication required' });
-      return;
-    }
+const notificationController = new NotificationController();
 
-    const {
-      // Email settings
-      emailNotifications,
-      emailDigest,
-      
-      // Push settings
-      pushNotifications,
-      
-      // Notification types
-      eventReminders,
-      eventRecommendations,
-      connectionRequests,
-      messages,
-      promotions,
-      paymentConfirmations,
-      eventUpdates,
-      
-      // Quiet hours
-      quietHoursEnabled,
-      quietHoursStart,
-      quietHoursEnd,
-      quietHoursTimezone,
-      
-      // Digest settings
-      digestFrequency,
-      digestDay,
-      digestTime,
-      
-      // Additional
-      notifyBeforeEvent,
-      maxNotificationsPerDay,
-    } = req.body;
+// Named exports to satisfy functional-style routing
+export const list = (req: AuthRequest, res: Response, next: NextFunction) => notificationController.list(req, res, next);
+export const getNotifications = list;
+export const markRead = (req: AuthRequest, res: Response, next: NextFunction) => notificationController.markRead(req, res, next);
+export const markAsRead = markRead;
+export const markAllRead = (req: AuthRequest, res: Response, next: NextFunction) => notificationController.markAllRead(req, res, next);
+export const markAllAsRead = markAllRead;
+export const deleteOne = (req: AuthRequest, res: Response, next: NextFunction) => notificationController.deleteOne(req, res, next);
+export const deleteNotification = deleteOne;
+export const deleteAllRead = (req: AuthRequest, res: Response, next: NextFunction) => notificationController.deleteAllRead(req, res, next);
+export const sendEventReminders = (req: AuthRequest, res: Response, next: NextFunction) => notificationController.sendEventReminders(req, res, next);
+export const sendEventNotification = (req: AuthRequest, res: Response, next: NextFunction) => notificationController.sendEventNotification(req, res, next);
+export const getPreferences = (req: AuthRequest, res: Response, next: NextFunction) => notificationController.getPreferences(req, res, next);
+export const getNotificationPreferences = getPreferences;
+export const updatePreferences = (req: AuthRequest, res: Response, next: NextFunction) => notificationController.updatePreferences(req, res, next);
+export const updateNotificationPreferences = updatePreferences;
+export const getNotificationDigest = (req: AuthRequest, res: Response, next: NextFunction) => notificationController.getDigest(req, res, next);
+export const createNotification = (userId: string, type: string, title: string, message: string, data?: any) => 
+  notificationController.createNotification(userId, type, title, message, data);
+export const shouldSendNotification = (userId: string) => notificationController.shouldSendNotification(userId);
 
-    const preferences = await prisma.notificationPreferences.upsert({
-      where: { userId: user.id },
-      update: {
-        emailNotifications: emailNotifications !== undefined ? emailNotifications : undefined,
-        emailDigest: emailDigest !== undefined ? emailDigest : undefined,
-        pushNotifications: pushNotifications !== undefined ? pushNotifications : undefined,
-        eventReminders: eventReminders !== undefined ? eventReminders : undefined,
-        eventRecommendations: eventRecommendations !== undefined ? eventRecommendations : undefined,
-        connectionRequests: connectionRequests !== undefined ? connectionRequests : undefined,
-        messages: messages !== undefined ? messages : undefined,
-        promotions: promotions !== undefined ? promotions : undefined,
-        paymentConfirmations: paymentConfirmations !== undefined ? paymentConfirmations : undefined,
-        eventUpdates: eventUpdates !== undefined ? eventUpdates : undefined,
-        quietHoursEnabled: quietHoursEnabled !== undefined ? quietHoursEnabled : undefined,
-        quietHoursStart: quietHoursStart !== undefined ? quietHoursStart : undefined,
-        quietHoursEnd: quietHoursEnd !== undefined ? quietHoursEnd : undefined,
-        quietHoursTimezone: quietHoursTimezone !== undefined ? quietHoursTimezone : undefined,
-        digestFrequency: digestFrequency !== undefined ? digestFrequency : undefined,
-        digestDay: digestDay !== undefined ? digestDay : undefined,
-        digestTime: digestTime !== undefined ? digestTime : undefined,
-        notifyBeforeEvent: notifyBeforeEvent !== undefined ? notifyBeforeEvent : undefined,
-        maxNotificationsPerDay: maxNotificationsPerDay !== undefined ? maxNotificationsPerDay : undefined,
-      },
-      create: {
-        userId: user.id,
-        emailNotifications: emailNotifications !== undefined ? emailNotifications : true,
-        emailDigest: emailDigest !== undefined ? emailDigest : 'daily',
-        pushNotifications: pushNotifications !== undefined ? pushNotifications : true,
-        eventReminders: eventReminders !== undefined ? eventReminders : true,
-        eventRecommendations: eventRecommendations !== undefined ? eventRecommendations : true,
-        connectionRequests: connectionRequests !== undefined ? connectionRequests : true,
-        messages: messages !== undefined ? messages : true,
-        promotions: promotions !== undefined ? promotions : false,
-        paymentConfirmations: paymentConfirmations !== undefined ? paymentConfirmations : true,
-        eventUpdates: eventUpdates !== undefined ? eventUpdates : true,
-        quietHoursEnabled: quietHoursEnabled !== undefined ? quietHoursEnabled : false,
-        quietHoursStart: quietHoursStart !== undefined ? quietHoursStart : '22:00',
-        quietHoursEnd: quietHoursEnd !== undefined ? quietHoursEnd : '08:00',
-        quietHoursTimezone: quietHoursTimezone !== undefined ? quietHoursTimezone : 'Africa/Blantyre',
-        digestFrequency: digestFrequency !== undefined ? digestFrequency : 'daily',
-        digestTime: digestTime !== undefined ? digestTime : '09:00',
-        notifyBeforeEvent: notifyBeforeEvent !== undefined ? notifyBeforeEvent : 24,
-        maxNotificationsPerDay: maxNotificationsPerDay !== undefined ? maxNotificationsPerDay : 50,
-      },
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Notification preferences updated',
-      data: preferences,
-    });
-  } catch (error) {
-    console.error('Update preferences error:', error);
-    res.status(500).json({ success: false, message: 'Failed to update preferences' });
-  }
-};
-
-// Check if notification should be sent based on quiet hours
-export const shouldSendNotification = async (userId: string): Promise<boolean> => {
-  const preferences = await prisma.notificationPreferences.findUnique({
-    where: { userId },
-  });
-
-  if (!preferences || !preferences.quietHoursEnabled) {
-    return true;
-  }
-
-  const now = new Date();
-  const currentHour = now.getHours();
-  const currentMinute = now.getMinutes();
-  const currentTime = `${currentHour.toString().padStart(2, '0')}:${currentMinute.toString().padStart(2, '0')}`;
-
-  const start = preferences.quietHoursStart || '22:00';
-  const end = preferences.quietHoursEnd || '08:00';
-
-  // Handle overnight quiet hours (e.g., 22:00 to 08:00)
-  if (start > end) {
-    return !(currentTime >= start || currentTime <= end);
-  } else {
-    return !(currentTime >= start && currentTime <= end);
-  }
-  
-};
-
-// Get notification digest
-export const getNotificationDigest = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user;
-    if (!user) {
-      res.status(401).json({ success: false, message: 'Authentication required' });
-      return;
-    }
-
-    const preferences = await prisma.notificationPreferences.findUnique({
-      where: { userId: user.id },
-    });
-
-    const digestFrequency = preferences?.digestFrequency || 'daily';
-    const digestTime = preferences?.digestTime || '09:00';
-    
-    let startDate: Date;
-    const now = new Date();
-
-    switch (digestFrequency) {
-      case 'daily':
-        startDate = new Date(now);
-        startDate.setDate(now.getDate() - 1);
-        break;
-      case 'weekly':
-        startDate = new Date(now);
-        startDate.setDate(now.getDate() - 7);
-        break;
-      default:
-        startDate = new Date(0); // beginning of time
-    }
-
-    const notifications = await prisma.notification.findMany({
-      where: {
-        userId: user.id,
-        createdAt: { gte: startDate },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    const groupedByType = notifications.reduce((acc, notif) => {
-      const type = notif.type;
-      if (!acc[type]) acc[type] = [];
-      acc[type].push(notif);
-      return acc;
-    }, {} as Record<string, any[]>);
-
-    res.status(200).json({
-      success: true,
-      data: {
-        frequency: digestFrequency,
-        digestTime,
-        period: {
-          start: startDate,
-          end: now,
-        },
-        summary: {
-          total: notifications.length,
-          unread: notifications.filter(n => !n.read).length,
-          byType: Object.keys(groupedByType).map(type => ({
-            type,
-            count: groupedByType[type].length,
-          })),
-        },
-        notifications: notifications.slice(0, 50),
-      },
-    });
-  } catch (error) {
-    console.error('Get digest error:', error);
-    res.status(500).json({ success: false, message: 'Failed to get digest' });
-  }
-};
+export default notificationController;

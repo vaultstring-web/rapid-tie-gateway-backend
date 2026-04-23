@@ -11,15 +11,15 @@ export declare const analyticsSchema: z.ZodObject<{
         startDate: string;
         endDate: string;
         status?: string | undefined;
-        paymentMethod?: string | undefined;
         eventId?: string | undefined;
+        paymentMethod?: string | undefined;
         exportCsv?: boolean | "true" | "false" | undefined;
     }, {
         startDate: string;
         endDate: string;
         status?: string | undefined;
-        paymentMethod?: string | undefined;
         eventId?: string | undefined;
+        paymentMethod?: string | undefined;
         exportCsv?: boolean | "true" | "false" | undefined;
     }>;
     query: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
@@ -29,23 +29,23 @@ export declare const analyticsSchema: z.ZodObject<{
         startDate: string;
         endDate: string;
         status?: string | undefined;
-        paymentMethod?: string | undefined;
         eventId?: string | undefined;
+        paymentMethod?: string | undefined;
         exportCsv?: boolean | "true" | "false" | undefined;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }, {
     body: {
         startDate: string;
         endDate: string;
         status?: string | undefined;
-        paymentMethod?: string | undefined;
         eventId?: string | undefined;
+        paymentMethod?: string | undefined;
         exportCsv?: boolean | "true" | "false" | undefined;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }>;
 export declare const transactionsQuerySchema: z.ZodObject<{
     query: z.ZodObject<{
@@ -59,53 +59,53 @@ export declare const transactionsQuerySchema: z.ZodObject<{
         eventId: z.ZodOptional<z.ZodString>;
         search: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
+        status?: string | undefined;
+        maxAmount?: string | number | undefined;
+        eventId?: string | undefined;
+        paymentMethod?: string | undefined;
         startDate?: string | undefined;
         endDate?: string | undefined;
-        status?: string | undefined;
-        paymentMethod?: string | undefined;
-        eventId?: string | undefined;
+        search?: string | undefined;
         page?: string | undefined;
         minAmount?: string | number | undefined;
-        maxAmount?: string | number | undefined;
-        search?: string | undefined;
     }, {
+        status?: string | undefined;
+        maxAmount?: string | number | undefined;
+        eventId?: string | undefined;
+        paymentMethod?: string | undefined;
         startDate?: string | undefined;
         endDate?: string | undefined;
-        status?: string | undefined;
-        paymentMethod?: string | undefined;
-        eventId?: string | undefined;
+        search?: string | undefined;
         page?: string | undefined;
         minAmount?: string | number | undefined;
-        maxAmount?: string | number | undefined;
-        search?: string | undefined;
     }>;
     body: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
     params: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
 }, "strip", z.ZodTypeAny, {
     query: {
+        status?: string | undefined;
+        maxAmount?: string | number | undefined;
+        eventId?: string | undefined;
+        paymentMethod?: string | undefined;
         startDate?: string | undefined;
         endDate?: string | undefined;
-        status?: string | undefined;
-        paymentMethod?: string | undefined;
-        eventId?: string | undefined;
+        search?: string | undefined;
         page?: string | undefined;
         minAmount?: string | number | undefined;
-        maxAmount?: string | number | undefined;
-        search?: string | undefined;
     };
     params?: {} | undefined;
     body?: {} | undefined;
 }, {
     query: {
+        status?: string | undefined;
+        maxAmount?: string | number | undefined;
+        eventId?: string | undefined;
+        paymentMethod?: string | undefined;
         startDate?: string | undefined;
         endDate?: string | undefined;
-        status?: string | undefined;
-        paymentMethod?: string | undefined;
-        eventId?: string | undefined;
+        search?: string | undefined;
         page?: string | undefined;
         minAmount?: string | number | undefined;
-        maxAmount?: string | number | undefined;
-        search?: string | undefined;
     };
     params?: {} | undefined;
     body?: {} | undefined;
@@ -124,14 +124,14 @@ export declare const transactionParamsSchema: z.ZodObject<{
     params: {
         id: string;
     };
-    body?: {} | undefined;
     query?: {} | undefined;
+    body?: {} | undefined;
 }, {
     params: {
         id: string;
     };
-    body?: {} | undefined;
     query?: {} | undefined;
+    body?: {} | undefined;
 }>;
 export declare const paymentLinksQuerySchema: z.ZodObject<{
     query: z.ZodObject<{
@@ -140,28 +140,28 @@ export declare const paymentLinksQuerySchema: z.ZodObject<{
         active: z.ZodOptional<z.ZodEnum<["true", "false"]>>;
     }, "strip", z.ZodTypeAny, {
         eventId?: string | undefined;
-        page?: string | undefined;
         active?: "true" | "false" | undefined;
+        page?: string | undefined;
     }, {
         eventId?: string | undefined;
-        page?: string | undefined;
         active?: "true" | "false" | undefined;
+        page?: string | undefined;
     }>;
     body: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
     params: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
 }, "strip", z.ZodTypeAny, {
     query: {
         eventId?: string | undefined;
-        page?: string | undefined;
         active?: "true" | "false" | undefined;
+        page?: string | undefined;
     };
     params?: {} | undefined;
     body?: {} | undefined;
 }, {
     query: {
         eventId?: string | undefined;
-        page?: string | undefined;
         active?: "true" | "false" | undefined;
+        page?: string | undefined;
     };
     params?: {} | undefined;
     body?: {} | undefined;
@@ -178,51 +178,51 @@ export declare const createPaymentLinkSchema: z.ZodObject<{
         metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodAny>>;
     }, "strip", z.ZodTypeAny, {
         title: string;
+        expiresAt?: string | undefined;
         eventId?: string | undefined;
-        description?: string | undefined;
         amount?: string | number | undefined;
         currency?: string | undefined;
-        singleUse?: boolean | undefined;
-        expiresAt?: string | undefined;
         metadata?: Record<string, any> | undefined;
+        description?: string | undefined;
+        singleUse?: boolean | undefined;
     }, {
         title: string;
+        expiresAt?: string | undefined;
         eventId?: string | undefined;
-        description?: string | undefined;
         amount?: string | number | undefined;
         currency?: string | undefined;
-        singleUse?: boolean | undefined;
-        expiresAt?: string | undefined;
         metadata?: Record<string, any> | undefined;
+        description?: string | undefined;
+        singleUse?: boolean | undefined;
     }>;
     query: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
     params: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
 }, "strip", z.ZodTypeAny, {
     body: {
         title: string;
+        expiresAt?: string | undefined;
         eventId?: string | undefined;
-        description?: string | undefined;
         amount?: string | number | undefined;
         currency?: string | undefined;
-        singleUse?: boolean | undefined;
-        expiresAt?: string | undefined;
         metadata?: Record<string, any> | undefined;
+        description?: string | undefined;
+        singleUse?: boolean | undefined;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }, {
     body: {
         title: string;
+        expiresAt?: string | undefined;
         eventId?: string | undefined;
-        description?: string | undefined;
         amount?: string | number | undefined;
         currency?: string | undefined;
-        singleUse?: boolean | undefined;
-        expiresAt?: string | undefined;
         metadata?: Record<string, any> | undefined;
+        description?: string | undefined;
+        singleUse?: boolean | undefined;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }>;
 export declare const refundSchema: z.ZodObject<{
     body: z.ZodObject<{
@@ -246,16 +246,16 @@ export declare const refundSchema: z.ZodObject<{
         transactionId: string;
         reason?: string | undefined;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }, {
     body: {
         amount: string | number;
         transactionId: string;
         reason?: string | undefined;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }>;
 export declare const createApiKeySchema: z.ZodObject<{
     body: z.ZodObject<{
@@ -264,31 +264,31 @@ export declare const createApiKeySchema: z.ZodObject<{
         expiresAt: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
         name: string;
-        expiresAt?: string | undefined;
         permissions?: string[] | undefined;
+        expiresAt?: string | undefined;
     }, {
         name: string;
-        expiresAt?: string | undefined;
         permissions?: string[] | undefined;
+        expiresAt?: string | undefined;
     }>;
     query: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
     params: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
 }, "strip", z.ZodTypeAny, {
     body: {
         name: string;
-        expiresAt?: string | undefined;
         permissions?: string[] | undefined;
+        expiresAt?: string | undefined;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }, {
     body: {
         name: string;
-        expiresAt?: string | undefined;
         permissions?: string[] | undefined;
+        expiresAt?: string | undefined;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }>;
 export declare const apiKeyParamsSchema: z.ZodObject<{
     params: z.ZodObject<{
@@ -304,42 +304,42 @@ export declare const apiKeyParamsSchema: z.ZodObject<{
     params: {
         id: string;
     };
-    body?: {} | undefined;
     query?: {} | undefined;
+    body?: {} | undefined;
 }, {
     params: {
         id: string;
     };
-    body?: {} | undefined;
     query?: {} | undefined;
+    body?: {} | undefined;
 }>;
 export declare const createWebhookSchema: z.ZodObject<{
     body: z.ZodObject<{
         url: z.ZodString;
         events: z.ZodArray<z.ZodString, "many">;
     }, "strip", z.ZodTypeAny, {
-        url: string;
         events: string[];
+        url: string;
     }, {
-        url: string;
         events: string[];
+        url: string;
     }>;
     query: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
     params: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
 }, "strip", z.ZodTypeAny, {
     body: {
-        url: string;
         events: string[];
+        url: string;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }, {
     body: {
-        url: string;
         events: string[];
+        url: string;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }>;
 export declare const updateWebhookSchema: z.ZodObject<{
     params: z.ZodObject<{
@@ -354,13 +354,13 @@ export declare const updateWebhookSchema: z.ZodObject<{
         events: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
         active: z.ZodOptional<z.ZodBoolean>;
     }, "strip", z.ZodTypeAny, {
+        events?: string[] | undefined;
         url?: string | undefined;
         active?: boolean | undefined;
-        events?: string[] | undefined;
     }, {
+        events?: string[] | undefined;
         url?: string | undefined;
         active?: boolean | undefined;
-        events?: string[] | undefined;
     }>;
     query: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
 }, "strip", z.ZodTypeAny, {
@@ -368,9 +368,9 @@ export declare const updateWebhookSchema: z.ZodObject<{
         id: string;
     };
     body: {
+        events?: string[] | undefined;
         url?: string | undefined;
         active?: boolean | undefined;
-        events?: string[] | undefined;
     };
     query?: {} | undefined;
 }, {
@@ -378,9 +378,9 @@ export declare const updateWebhookSchema: z.ZodObject<{
         id: string;
     };
     body: {
+        events?: string[] | undefined;
         url?: string | undefined;
         active?: boolean | undefined;
-        events?: string[] | undefined;
     };
     query?: {} | undefined;
 }>;
@@ -401,19 +401,19 @@ export declare const webhookLogsQuerySchema: z.ZodObject<{
     }>;
     body: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
 }, "strip", z.ZodTypeAny, {
-    params: {
-        id: string;
-    };
     query: {
         page?: string | undefined;
+    };
+    params: {
+        id: string;
     };
     body?: {} | undefined;
 }, {
-    params: {
-        id: string;
-    };
     query: {
         page?: string | undefined;
+    };
+    params: {
+        id: string;
     };
     body?: {} | undefined;
 }>;
@@ -443,8 +443,8 @@ export declare const checkoutSettingsSchema: z.ZodObject<{
         successUrl?: string | undefined;
         cancelUrl?: string | undefined;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }, {
     body: {
         checkoutBranding?: Record<string, any> | undefined;
@@ -452,8 +452,8 @@ export declare const checkoutSettingsSchema: z.ZodObject<{
         successUrl?: string | undefined;
         cancelUrl?: string | undefined;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }>;
 export declare const inviteTeamSchema: z.ZodObject<{
     body: z.ZodObject<{
@@ -461,31 +461,31 @@ export declare const inviteTeamSchema: z.ZodObject<{
         role: z.ZodEnum<["admin", "manager", "viewer", "support"]>;
         eventPermissions: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
     }, "strip", z.ZodTypeAny, {
-        role: "admin" | "manager" | "viewer" | "support";
         email: string;
+        role: "admin" | "manager" | "viewer" | "support";
         eventPermissions?: string[] | undefined;
     }, {
-        role: "admin" | "manager" | "viewer" | "support";
         email: string;
+        role: "admin" | "manager" | "viewer" | "support";
         eventPermissions?: string[] | undefined;
     }>;
     query: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
     params: z.ZodOptional<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>;
 }, "strip", z.ZodTypeAny, {
     body: {
-        role: "admin" | "manager" | "viewer" | "support";
         email: string;
+        role: "admin" | "manager" | "viewer" | "support";
         eventPermissions?: string[] | undefined;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }, {
     body: {
-        role: "admin" | "manager" | "viewer" | "support";
         email: string;
+        role: "admin" | "manager" | "viewer" | "support";
         eventPermissions?: string[] | undefined;
     };
-    params?: {} | undefined;
     query?: {} | undefined;
+    params?: {} | undefined;
 }>;
 //# sourceMappingURL=merchant.validators.d.ts.map
