@@ -5,7 +5,7 @@
   "main": "dist/server.js",
   "scripts": {
     "test-server": "ts-node src/test-server.ts",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest",
     "test:api": "bash test-api.sh",
     "dev": "nodemon src/server.ts",
     "build": "tsc",
@@ -14,7 +14,10 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "db:seed": "ts-node prisma/seed/seed.ts",
-    "db:setup": "prisma migrate dev && ts-node prisma/seed.ts"
+    "db:setup": "prisma migrate dev && ts-node prisma/seed.ts",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:ui": "jest --watch-ui"
   },
   "dependencies": {
     "@prisma/client": "^5.0.0",
@@ -44,6 +47,7 @@
     "sharp": "^0.32.5",
     "socket.io": "^4.7.2",
     "speakeasy": "^2.0.0",
+    "uuid": "^9.0.1",
     "winston": "^3.10.0",
     "zod": "^3.25.76"
   },

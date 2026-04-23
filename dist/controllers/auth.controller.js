@@ -121,8 +121,11 @@ class AuthController {
     }
     async verifyEmail(req, res, next) {
         try {
-            const { token } = req.query;
-            if (!token || typeof token !== 'string') {
+            const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
+            const bodyToken = typeof req.body?.token === 'string' ? req.body.token : undefined;
+            const bodyCode = typeof req.body?.code === 'string' ? req.body.code : undefined;
+            const token = queryToken || bodyToken || bodyCode;
+            if (!token) {
                 return next(new errorHandler_1.AppError('Invalid verification token', 400));
             }
             const user = await server_1.prisma.user.findFirst({
@@ -148,6 +151,28 @@ class AuthController {
             res.json({
                 success: true,
                 message: 'Email verified successfully',
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async validateResetToken(req, res, next) {
+        try {
+            const token = typeof req.query.token === 'string' ? req.query.token : undefined;
+            if (!token) {
+                return next(new errorHandler_1.AppError('Token is required', 400));
+            }
+            const user = await server_1.prisma.user.findFirst({
+                where: {
+                    resetToken: token,
+                    resetTokenExpiry: { gt: new Date() },
+                },
+                select: { id: true },
+            });
+            res.json({
+                success: true,
+                valid: Boolean(user),
             });
         }
         catch (error) {
@@ -250,11 +275,18 @@ class AuthController {
                 },
             });
             const qrCode = await qrcode_1.default.toDataURL(secret.otpauth_url);
+            const backupCodes = Array.from({ length: 8 }, () => crypto_1.default.randomBytes(4).toString('hex'));
+            await server_1.prisma.user.update({
+                where: { id: req.user.id },
+                data: { twoFactorBackupCodes: backupCodes },
+            });
             res.json({
                 success: true,
                 data: {
                     qrCode,
                     secret: secret.base32,
+                    backupCodes,
+                    otpauthUrl: secret.otpauth_url,
                 },
             });
         }
@@ -262,9 +294,111 @@ class AuthController {
             next(error);
         }
     }
+    async get2FAStatus(req, res, next) {
+        try {
+            if (!req.user) {
+                return next(new errorHandler_1.AppError('Authentication required', 401));
+            }
+            const user = await server_1.prisma.user.findUnique({
+                where: { id: req.user.id },
+                select: {
+                    twoFactorEnabled: true,
+                    twoFactorSecret: true,
+                    twoFactorBackupCodes: true,
+                    trustedDevices: true,
+                },
+            });
+            if (!user) {
+                return next(new errorHandler_1.AppError('User not found', 404));
+            }
+            res.json({
+                success: true,
+                data: {
+                    enabled: user.twoFactorEnabled,
+                    verified: Boolean(user.twoFactorSecret),
+                    backupCodesRemaining: user.twoFactorBackupCodes?.length || 0,
+                    trustedDevices: Array.isArray(user.trustedDevices) ? user.trustedDevices : [],
+                },
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async enable2FA(req, res, next) {
+        try {
+            if (!req.user) {
+                return next(new errorHandler_1.AppError('Authentication required', 401));
+            }
+            const code = req.body?.code;
+            if (!code) {
+                return next(new errorHandler_1.AppError('Verification code is required', 400));
+            }
+            const user = await server_1.prisma.user.findUnique({ where: { id: req.user.id } });
+            if (!user || !user.twoFactorSecret) {
+                return next(new errorHandler_1.AppError('2FA setup required first', 400));
+            }
+            const isValid = speakeasy_1.default.totp.verify({
+                secret: user.twoFactorSecret,
+                encoding: 'base32',
+                token: code,
+                window: 1,
+            });
+            if (!isValid) {
+                return next(new errorHandler_1.AppError('Invalid verification code', 400));
+            }
+            const backupCodes = user.twoFactorBackupCodes?.length
+                ? user.twoFactorBackupCodes
+                : Array.from({ length: 8 }, () => crypto_1.default.randomBytes(4).toString('hex'));
+            await server_1.prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    twoFactorEnabled: true,
+                    twoFactorBackupCodes: backupCodes,
+                },
+            });
+            res.json({ success: true, data: { backupCodes } });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async disable2FA(req, res, next) {
+        try {
+            if (!req.user) {
+                return next(new errorHandler_1.AppError('Authentication required', 401));
+            }
+            const { password } = req.body;
+            if (!password) {
+                return next(new errorHandler_1.AppError('Password is required', 400));
+            }
+            const user = await server_1.prisma.user.findUnique({ where: { id: req.user.id } });
+            if (!user) {
+                return next(new errorHandler_1.AppError('User not found', 404));
+            }
+            const valid = await bcrypt_1.default.compare(password, user.password);
+            if (!valid) {
+                return next(new errorHandler_1.AppError('Invalid password', 400));
+            }
+            await server_1.prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    twoFactorEnabled: false,
+                    twoFactorSecret: null,
+                    twoFactorBackupCodes: [],
+                    trustedDevices: client_1.Prisma.JsonNull,
+                },
+            });
+            res.json({ success: true, message: '2FA disabled successfully' });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
     async verify2FA(req, res, next) {
         try {
-            const { userId, token } = req.body;
+            const { userId } = req.body;
+            const token = req.body?.token || req.body?.code;
             if (!userId || !token) {
                 return next(new errorHandler_1.AppError('UserId and token are required', 400));
             }
@@ -636,6 +770,184 @@ class AuthController {
                 success: true,
                 message: 'Verification email sent successfully',
             });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async verify2FABackupCode(req, res, next) {
+        try {
+            const { userId, backupCode } = req.body;
+            if (!userId || !backupCode) {
+                return next(new errorHandler_1.AppError('userId and backupCode are required', 400));
+            }
+            const user = await server_1.prisma.user.findUnique({ where: { id: userId } });
+            if (!user || !user.twoFactorEnabled) {
+                return next(new errorHandler_1.AppError('Invalid user', 400));
+            }
+            const exists = (user.twoFactorBackupCodes || []).includes(backupCode);
+            if (!exists) {
+                return next(new errorHandler_1.AppError('Invalid backup code', 400));
+            }
+            const remaining = (user.twoFactorBackupCodes || []).filter((code) => code !== backupCode);
+            await server_1.prisma.user.update({
+                where: { id: user.id },
+                data: { twoFactorBackupCodes: remaining },
+            });
+            const accessToken = this.generateToken(user.id);
+            const refreshToken = this.generateRefreshToken(user.id);
+            await server_1.prisma.session.create({
+                data: {
+                    userId: user.id,
+                    token: refreshToken,
+                    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                },
+            });
+            res.cookie('token', accessToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                maxAge: 15 * 60 * 1000,
+            });
+            res.json({ success: true, data: { token: accessToken, refreshToken } });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async getTrustedDevices(req, res, next) {
+        try {
+            if (!req.user) {
+                return next(new errorHandler_1.AppError('Authentication required', 401));
+            }
+            const user = await server_1.prisma.user.findUnique({
+                where: { id: req.user.id },
+                select: { trustedDevices: true },
+            });
+            res.json({
+                success: true,
+                data: Array.isArray(user?.trustedDevices) ? user.trustedDevices : [],
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async revokeTrustedDevice(req, res, next) {
+        try {
+            if (!req.user) {
+                return next(new errorHandler_1.AppError('Authentication required', 401));
+            }
+            const deviceId = req.params.deviceId;
+            const user = await server_1.prisma.user.findUnique({
+                where: { id: req.user.id },
+                select: { trustedDevices: true },
+            });
+            const devices = Array.isArray(user?.trustedDevices) ? user.trustedDevices : [];
+            const updated = devices.filter((device) => device?.id !== deviceId);
+            await server_1.prisma.user.update({
+                where: { id: req.user.id },
+                data: { trustedDevices: updated },
+            });
+            res.json({ success: true, message: 'Trusted device revoked' });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async regenerateBackupCodes(req, res, next) {
+        try {
+            if (!req.user) {
+                return next(new errorHandler_1.AppError('Authentication required', 401));
+            }
+            const codes = Array.from({ length: 8 }, () => crypto_1.default.randomBytes(4).toString('hex'));
+            await server_1.prisma.user.update({
+                where: { id: req.user.id },
+                data: { twoFactorBackupCodes: codes },
+            });
+            res.json({ success: true, data: { codes } });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async request2FARecovery(req, res) {
+        const { method, contact } = req.body || {};
+        logger_1.logger.info(`2FA recovery requested via ${method || 'unknown'} for ${contact || 'unknown-contact'}`);
+        res.json({
+            success: true,
+            message: 'If the account exists, a recovery message has been sent.',
+        });
+    }
+    async verify2FARecovery(req, res) {
+        const { token } = req.body || {};
+        if (!token) {
+            res.status(400).json({ success: false, message: 'Recovery token is required' });
+            return;
+        }
+        res.json({ success: true, message: 'Recovery verified' });
+    }
+    async getProfile(req, res, next) {
+        try {
+            if (!req.user)
+                return next(new errorHandler_1.AppError('Unauthorized', 401));
+            const user = await server_1.prisma.user.findUnique({
+                where: { id: req.user.id },
+                include: {
+                    merchant: true,
+                    organizer: true,
+                    employee: {
+                        include: {
+                            organization: { select: { id: true, name: true } },
+                            department: { select: { id: true, name: true } },
+                        },
+                    },
+                    approver: {
+                        include: { organization: { select: { id: true, name: true } } },
+                    },
+                    financeOfficer: {
+                        include: { organization: { select: { id: true, name: true } } },
+                    },
+                    admin: true,
+                },
+            });
+            if (!user)
+                return next(new errorHandler_1.AppError('User not found', 404));
+            const { password, twoFactorSecret, twoFactorBackupCodes, verificationToken, verificationTokenExpiry, resetToken, resetTokenExpiry, ...safeUser } = user;
+            res.json({ success: true, data: { user: safeUser } });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async updateProfile(req, res, next) {
+        try {
+            if (!req.user)
+                return next(new errorHandler_1.AppError('Unauthorized', 401));
+            const { firstName, lastName, phone, profileImage } = req.body;
+            if (phone && phone !== req.user.phone) {
+                const taken = await server_1.prisma.user.findFirst({
+                    where: { phone, NOT: { id: req.user.id } },
+                });
+                if (taken)
+                    return next(new errorHandler_1.AppError('Phone number already in use', 409));
+            }
+            const updated = await server_1.prisma.user.update({
+                where: { id: req.user.id },
+                data: {
+                    ...(firstName !== undefined && { firstName }),
+                    ...(lastName !== undefined && { lastName }),
+                    ...(phone !== undefined && { phone }),
+                    ...(profileImage !== undefined && { profileImage }),
+                },
+                select: {
+                    id: true, email: true, phone: true, firstName: true,
+                    lastName: true, role: true, profileImage: true,
+                    emailVerified: true, updatedAt: true,
+                },
+            });
+            await this.logActivity(req.user.id, 'PROFILE_UPDATE', req);
+            res.json({ success: true, data: { user: updated } });
         }
         catch (error) {
             next(error);

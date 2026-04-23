@@ -10,18 +10,18 @@ export declare const registerSchema: z.ZodObject<{
         businessName: z.ZodOptional<z.ZodString>;
         organizationName: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
-        role: "MERCHANT" | "ORGANIZER" | "EMPLOYEE";
         email: string;
         password: string;
+        role: "MERCHANT" | "ORGANIZER" | "EMPLOYEE";
         phone?: string | undefined;
         firstName?: string | undefined;
         lastName?: string | undefined;
         businessName?: string | undefined;
         organizationName?: string | undefined;
     }, {
-        role: "MERCHANT" | "ORGANIZER" | "EMPLOYEE";
         email: string;
         password: string;
+        role: "MERCHANT" | "ORGANIZER" | "EMPLOYEE";
         phone?: string | undefined;
         firstName?: string | undefined;
         lastName?: string | undefined;
@@ -30,9 +30,9 @@ export declare const registerSchema: z.ZodObject<{
     }>;
 }, "strip", z.ZodTypeAny, {
     body: {
-        role: "MERCHANT" | "ORGANIZER" | "EMPLOYEE";
         email: string;
         password: string;
+        role: "MERCHANT" | "ORGANIZER" | "EMPLOYEE";
         phone?: string | undefined;
         firstName?: string | undefined;
         lastName?: string | undefined;
@@ -41,9 +41,9 @@ export declare const registerSchema: z.ZodObject<{
     };
 }, {
     body: {
-        role: "MERCHANT" | "ORGANIZER" | "EMPLOYEE";
         email: string;
         password: string;
+        role: "MERCHANT" | "ORGANIZER" | "EMPLOYEE";
         phone?: string | undefined;
         firstName?: string | undefined;
         lastName?: string | undefined;

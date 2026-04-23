@@ -90,6 +90,23 @@ router.post('/change-password', authenticate, async (req: Request, res: Response
   }
 });
 
+// Profile routes (any authenticated role)
+router.get('/profile', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await authController.getProfile(req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put('/profile', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await authController.updateProfile(req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Test route
 router.get('/test', (_req: Request, res: Response) => {
   res.json({ 
@@ -149,6 +166,19 @@ router.get('/status', async (req: any, res) => {
 router.get('/verify', authController.verifyEmail.bind(authController));
 
 router.post('/resend-verification', authController.resendVerification);
-router.post('/2fa/setup', authController.setup2FA);
-router.post('/2fa/verify',authController.verify2FA);
+router.get('/status', (_req: Request, res: Response) => {
+  res.json({ success: true, message: 'Auth service is running' });
+});
+router.get('/validate-reset-token', authController.validateResetToken.bind(authController));
+router.get('/2fa/status', authenticate, authController.get2FAStatus.bind(authController));
+router.post('/2fa/setup', authenticate, authController.setup2FA.bind(authController));
+router.post('/2fa/enable', authenticate, authController.enable2FA.bind(authController));
+router.post('/2fa/disable', authenticate, authController.disable2FA.bind(authController));
+router.post('/2fa/verify', authController.verify2FA.bind(authController));
+router.post('/2fa/backup-code', authController.verify2FABackupCode.bind(authController));
+router.get('/2fa/devices', authenticate, authController.getTrustedDevices.bind(authController));
+router.delete('/2fa/devices/:deviceId', authenticate, authController.revokeTrustedDevice.bind(authController));
+router.post('/2fa/backup-codes/regenerate', authenticate, authController.regenerateBackupCodes.bind(authController));
+router.post('/2fa/recovery/request', authController.request2FARecovery.bind(authController));
+router.post('/2fa/recovery/verify', authController.verify2FARecovery.bind(authController));
 export default router;

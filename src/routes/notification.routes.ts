@@ -1,4 +1,4 @@
-// routes/notification.routes.ts
+// src/routes/notification.routes.ts
 import { Router } from 'express';
 import { authenticate } from '../middlewares/auth';
 import {
@@ -11,6 +11,7 @@ import {
   getNotificationPreferences,
   updateNotificationPreferences,
   getNotificationDigest,
+  deleteAllRead,
 } from '../controllers/notification.controller';
 
 const router: Router = Router();
@@ -18,7 +19,7 @@ const router: Router = Router();
 // Apply authentication to all notification routes
 router.use(authenticate);
 
-// GET /api/notifications - Get user's notifications
+// GET /api/notifications - Get user's notifications (paginated)
 router.get('/', getNotifications);
 
 // GET /api/notifications/digest - Get notification digest
@@ -36,12 +37,18 @@ router.put('/read-all', markAllAsRead);
 // PUT /api/notifications/:id/read - Mark single as read
 router.put('/:id/read', markAsRead);
 
-// DELETE /api/notifications/:id - Delete notification
-router.delete('/:id', deleteNotification);
-// GET /api/users/notification-preferences - Get preferences
-router.get('/users/notification-preferences', getNotificationPreferences);
+// DELETE /api/notifications - Delete all read notifications
+router.delete('/', deleteAllRead);
 
-// PUT /api/users/notification-preferences - Update preferences
+// DELETE /api/notifications/:id - Delete single notification
+router.delete('/:id', deleteNotification);
+
+// Preferences routes
+router.get('/preferences', getNotificationPreferences);
+router.put('/preferences', updateNotificationPreferences);
+
+// Backward compatibility or alternate preference paths if needed
+router.get('/users/notification-preferences', getNotificationPreferences);
 router.put('/users/notification-preferences', updateNotificationPreferences);
 
 export default router;
