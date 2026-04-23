@@ -3,13 +3,13 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
-import cookieParser from 'cookie-parser';
+import cookieParser from 'cookie-parser'; // Fixed: changed 'cookieParser' to 'cookie-parser'
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server as SocketServer } from 'socket.io';
 import { PrismaClient } from '@prisma/client';
-import jwt from 'jsonwebtoken'; // ADDED for notification authentication
+import jwt from 'jsonwebtoken';
 import attendeesRoutes from './routes/attendees.routes';
 // Load environment variables
 dotenv.config();
@@ -33,8 +33,22 @@ import recommendationsRoutes from './routes/recommendations.routes';
 import calendarRoutes from './routes/calendar.routes';
 import networkingRoutes from './routes/networking.routes';
 import notificationRoutes from './routes/notification.routes';
- import qrcodeRoutes from './routes/qrcode.routes';
- import communicationRoutes from './routes/communication.routes';
+import qrcodeRoutes from './routes/qrcode.routes';
+import communicationRoutes from './routes/communication.routes';
+import adminMerchantRoutes from './routes/admin/merchantManagement.routes'; 
+import adminUserRoutes from './routes/admin/userManagement.routes';
+import adminHealthRoutes from './routes/admin/systemHealth.routes';
+import adminJobRoutes from './routes/admin/jobManagement.routes';
+import { initializeRecurringJobs } from './controllers/admin/jobManagement.controller';
+import adminTransactionRoutes from './routes/admin/transactionMonitor.routes';
+import adminSecurityRoutes from './routes/admin/securityDashboard.routes';
+import adminAuditRoutes from './routes/admin/auditLog.routes';
+import adminFraudRoutes from './routes/admin/fraudDetection.routes';
+// Import transaction monitor WebSocket functions
+import { 
+  addMonitorConnection, 
+  removeMonitorConnection,
+} from './controllers/admin/transactionMonitor.controller';
 
 // Import middleware
 import { errorHandler } from './utils/errorHandler';
@@ -105,6 +119,16 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/organizer', qrcodeRoutes); 
 app.use('/api/organizer', communicationRoutes);
 app.use('/api', communicationRoutes); 
+app.use('/api/admin', adminMerchantRoutes);
+app.use('/api/admin', adminUserRoutes);
+app.use('/api/admin', adminHealthRoutes);
+app.use('/api/admin', adminJobRoutes);
+app.use('/api/admin', adminTransactionRoutes);
+app.use('/api/admin', adminSecurityRoutes);
+app.use('/api/admin', adminAuditRoutes);
+app.use('/api/admin', adminFraudRoutes);
+// Initialize recurring jobs after server starts
+initializeRecurringJobs().catch(console.error);
 
 // Error handling
 app.use(notfound);
@@ -142,10 +166,10 @@ io.on('connection', (socket) => {
         });
         socket.emit('unread-count', { count: unreadCount });
       } else {
-        console.error('User not found for token'); // FIXED: changed to console.error
+        console.error('User not found for token');
       }
     } catch (error) {
-      console.error('Socket authentication error:', error); // FIXED: changed to console.error
+      console.error('Socket authentication error:', error);
     }
   });
 
@@ -160,7 +184,6 @@ io.on('connection', (socket) => {
     socket.join(`event-${eventId}`);
     logger.info(`Client ${socket.id} joined event-${eventId} sales room`);
     
-    // Send immediate update when joining
     try {
       const sales = await prisma.ticketSale.findMany({
         where: { eventId: eventId },
@@ -186,7 +209,7 @@ io.on('connection', (socket) => {
         recentSales: sales
       });
     } catch (error) {
-      console.error('Error sending initial sales data:', error); // FIXED: changed to console.error
+      console.error('Error sending initial sales data:', error);
     }
   });
 
@@ -204,14 +227,60 @@ io.on('connection', (socket) => {
       });
       logger.info(`Notification ${notificationId} marked as read via socket`);
     } catch (error) {
-      console.error('Error marking notification as read:', error); // FIXED: changed to console.error
+      console.error('Error marking notification as read:', error);
     }
   });
 
+  // ============================================
+  // TRANSACTION MONITORING WEBSOCKET
+  // ============================================
+  
+  // Join transaction monitoring (admin only)
+  socket.on('join-transaction-monitor', async (data: { token: string }) => {
+    try {
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) {
+        throw new Error('JWT_SECRET not defined');
+      }
+      const decoded = jwt.verify(data.token, jwtSecret) as { id: string };
+      const user = await prisma.user.findUnique({ where: { id: decoded.id } });
+      
+      // Only allow admin users
+      if (user && user.role === 'ADMIN') {
+        addMonitorConnection(socket.id, socket);
+        socket.emit('transaction-monitor-connected', { 
+          status: 'connected', 
+          message: 'Connected to transaction monitor',
+          timestamp: new Date().toISOString()
+        });
+        logger.info(`Admin ${user.email} joined transaction monitor`);
+      } else {
+        socket.emit('transaction-monitor-error', { message: 'Unauthorized. Admin access required.' });
+        logger.warn(`Unauthorized attempt to join transaction monitor from ${socket.id}`);
+      }
+    } catch (error) {
+      console.error('Transaction monitor authentication error:', error);
+      socket.emit('transaction-monitor-error', { message: 'Authentication failed' });
+    }
+  });
+
+  // Leave transaction monitoring
+  socket.on('leave-transaction-monitor', () => {
+    removeMonitorConnection(socket.id);
+    logger.info(`Client ${socket.id} left transaction monitor`);
+  });
+
+  // ============================================
+  // END OF TRANSACTION MONITORING SECTION
+  // ============================================
+
   socket.on('disconnect', () => {
+    // Clean up transaction monitor connection on disconnect
+    removeMonitorConnection(socket.id);
     logger.info(`Client disconnected: ${socket.id}`);
   });
 });
+
 // Function to emit sales updates (can be called from other parts of the app)
 const emitSalesUpdate = async (eventId: string) => {
   try {
@@ -228,8 +297,8 @@ const emitSalesUpdate = async (eventId: string) => {
       take: 5
     });
 
-    const totalRevenue = sales.reduce((sum, sale) => sum + sale.totalAmount, 0);
-    const totalTicketsSold = sales.reduce((sum, sale) => sum + sale.tickets.length, 0);
+    const totalRevenue = sales.reduce((sum: number, sale: any) => sum + sale.totalAmount, 0);
+    const totalTicketsSold = sales.reduce((sum: number, sale: any) => sum + sale.tickets.length, 0);
 
     io.to(`event-${eventId}`).emit('sales-update', {
       eventId,
@@ -243,7 +312,7 @@ const emitSalesUpdate = async (eventId: string) => {
   }
 };
 
-// Function to emit notification to user (ADDED)
+// Function to emit notification to user
 const emitNotification = (userId: string, notification: any) => {
   io.to(`user-${userId}`).emit('new-notification', notification);
 };

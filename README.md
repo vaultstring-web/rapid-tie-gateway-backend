@@ -522,3 +522,134 @@ POST /api/events/checkin
 | Check-in System | ✅ |
 | Batch Check-in | ✅ |
 | Offline Sync | ✅ |
+
+---
+
+
+# 🚀 P2 – Enhanced Platform Experience
+
+## 📊 Event Analytics Dashboard
+Endpoint:
+GET /api/analytics/events
+
+Features:
+- Cross-platform event metrics aggregation
+- Track event views by user role
+- Conversion rate calculation
+- Demographic breakdown analysis
+- Popular location heat maps
+
+---
+
+## 🌍 Universal Events Feed
+Endpoint:
+GET /api/events/universal
+
+Features:
+- Aggregate events from all sources
+- Personalized feed by user role
+- Relevance scoring algorithm
+- Cached personalized feed (5 minutes)
+
+---
+
+## 🎯 Event Recommendations
+Endpoint:
+GET /api/events/recommended
+
+Features:
+- Collaborative filtering recommendations
+- Past event attendance analysis
+- DSA employee travel destination logic
+- Merchant industry matching
+
+---
+
+## 📅 Event Calendar
+Endpoint:
+GET /api/calendar
+
+Features:
+- Aggregate saved & attended events
+- Multiple calendar views
+- iCal export support
+- Google Calendar export
+- Upcoming event reminders
+
+---
+
+## 🤝 Event Networking
+Endpoint:
+GET /api/events/networking
+
+Features:
+- Match users attending same events
+- Suggest connections by role & interests
+- Optional attendee messaging
+- Networking success metrics tracking
+
+---
+
+## 🔔 Notification Center
+Endpoint:
+GET /api/notifications
+
+Features:
+- Database-stored notifications
+- Event reminders & recommendations
+- Read / unread status
+- Real-time WebSocket notifications
+
+---
+
+## ⚙️ Notification Preferences
+Endpoint:
+PUT /api/users/notification-preferences
+
+Features:
+- User notification preferences
+- Event reminder settings
+- Quiet hours configuration
+- Digest frequency control
+
+---
+
+## 🎟️ QR Code Management
+Endpoint:
+POST /api/organizer/qrcodes/regenerate
+
+Features:
+- HMAC-signed QR codes
+- Role-specific QR codes
+- Bulk email queue
+- Delivery tracking
+
+---
+
+## 📢 Bulk Messaging
+Endpoint:
+POST /api/organizer/communications
+
+Features:
+- Queue bulk messages
+- Filter recipients by role
+- Track open rates
+- Handle opt-out requests
+
+---
+
+## ✅ P2 Feature Checklist
+
+| Feature | Status |
+|--------|--------|
+| Event Analytics Dashboard | ✅ |
+| Universal Events Feed | ✅ |
+| Event Recommendations | ✅ |
+| Event Calendar | ✅ |
+| Event Networking | ✅ |
+| Notification Center | ✅ |
+| Notification Preferences | ✅ |
+| QR Code Management | ✅ |
+| Bulk Messaging | ✅ |
+
+---

@@ -44,7 +44,7 @@ model User {
   sessions       Session[]
   notifications  Notification[]
   activityLogs   ActivityLog[]
-   // Add these new relations for networking
+   // networking relations
   sentConnections    Connection[] @relation("UserFromConnections")
   receivedConnections Connection[] @relation("UserToConnections")
   sentMessages       Message[]    @relation("UserFromMessages")
@@ -53,6 +53,7 @@ model User {
   notificationPreferences NotificationPreferences?
    communicationRecipients CommunicationRecipient[]
   communicationOptOuts   CommunicationOptOut[]
+  auditLogs AuditLog[]
 }
 
 model Session {
@@ -560,6 +561,7 @@ model Transaction {
   organizer EventOrganizer? @relation(fields: [organizerId], references: [id])
   refunds   Refund[]
   auditLogs AuditLog[]
+  flaggedTransactions FlaggedTransaction[]
 }
 
 model PaymentLink {
@@ -755,9 +757,17 @@ model AuditLog {
   status        String
   details       Json?
   ipAddress     String?
+  userAgent     String?
+  entityType    String?  // Transaction, User, Event, Merchant, etc.
+  entityId      String?
+  oldValues     Json?    // Previous state before change
+  newValues     Json?    // New state after change
+  hash          String?  // Tamper-proof hash of the log entry
+  previousHash  String?  // Hash of previous log entry for chain
   createdAt     DateTime @default(now())
 
   transaction Transaction? @relation(fields: [transactionId], references: [id])
+  user        User?        @relation(fields: [userId], references: [id])
 }
 
 model Connection {
@@ -876,6 +886,55 @@ model CommunicationOptOut {
   event Event? @relation(fields: [eventId], references: [id])
   
   @@unique([email, eventId])
+}
+model FraudRule {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  type        String    // amount_velocity, ip_country, device_fingerprint, time_pattern, multiple_failures, high_value
+  condition   Json      // Rule conditions (JSON)
+  action      String    // flag, block, review, notify
+  priority    Int       @default(0) // Higher priority executes first
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  transactions FlaggedTransaction[]
+  alerts FraudAlert[]
+}
+
+model FlaggedTransaction {
+  id              String    @id @default(cuid())
+  transactionId   String
+  fraudRuleId     String
+  reason          String
+  severity        String    // low, medium, high, critical
+  status          String    @default("pending") // pending, reviewed, confirmed_fraud, false_positive
+  score           Int       // 0-100 fraud score
+  metadata        Json?
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+  fraudRule   FraudRule   @relation(fields: [fraudRuleId], references: [id])
+}
+
+model FraudAlert {
+  id          String    @id @default(cuid())
+  ruleId      String
+  transactionId String?
+  title       String
+  description String
+  severity    String
+  status      String    @default("new") // new, acknowledged, resolved
+  resolvedAt  DateTime?
+  resolvedBy  String?
+  createdAt   DateTime  @default(now())
+  
+  fraudRule FraudRule @relation(fields: [ruleId], references: [id])
 }
 // Enums
 enum UserRole {
