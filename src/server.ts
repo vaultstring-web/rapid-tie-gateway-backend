@@ -48,6 +48,7 @@ import adminTransactionRoutes from './routes/admin/transactionMonitor.routes';
 import adminSecurityRoutes from './routes/admin/securityDashboard.routes';
 import adminAuditRoutes from './routes/admin/auditLog.routes';
 import adminFraudRoutes from './routes/admin/fraudDetection.routes';
+import adminSettlementRoutes from './routes/admin/settlement.routes';
 
 // Import transaction monitor WebSocket functions
 import { 
@@ -77,7 +78,14 @@ app.use(cors({
 }));
 app.use(compression());
 app.use(morgan('combined', { stream: { write: (message) => logger.info(message.trim()) } }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, _res, buf) => {
+    // Capture raw body for webhook signature verification.
+    // Safe to store for all JSON requests; only used by webhook routes.
+    (req as any).rawBody = buf;
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 app.use('/api', limiter);
@@ -127,6 +135,7 @@ app.use('/api/admin', adminTransactionRoutes);
 app.use('/api/admin', adminSecurityRoutes);
 app.use('/api/admin', adminAuditRoutes);
 app.use('/api/admin', adminFraudRoutes);
+app.use('/api/admin', adminSettlementRoutes);
 
 // Initialize recurring jobs after server starts
 initializeRecurringJobs().catch(console.error);

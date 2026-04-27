@@ -18,6 +18,7 @@ import {
   transactionsQuerySchema,
   webhookLogsQuerySchema,
 } from '../validators/merchant.validators';
+import { listMerchantSettlements } from '../controllers/merchantSettlements.controller';
 
 const router: Router = Router();
 
@@ -90,5 +91,9 @@ router.get('/team', merchantController.getTeamMembers.bind(merchantController));
 
 // POST /api/merchant/team/invite
 router.post('/team/invite', validate(inviteTeamSchema), merchantController.inviteTeamMember.bind(merchantController));
+
+// ─── Settlements ──────────────────────────────────────────────────────────────
+// GET /api/merchant/settlements
+router.get('/settlements', listMerchantSettlements);
 
 export default router;

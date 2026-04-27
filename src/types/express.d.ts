@@ -1,9 +1,15 @@
-import { User } from "../prisma"; // or wherever your Prisma User type is
+import type { Buffer } from 'node:buffer';
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: User; // Optional, because user may not exist if not logged in
-    }
+declare module 'express-serve-static-core' {
+  interface Request {
+    // Keep flexible since current codebase attaches decoded auth user object directly.
+    user?: any;
+    /**
+     * Raw request body bytes (captured during JSON parsing).
+     * Needed for verifying provider webhook signatures.
+     */
+    rawBody?: Buffer;
   }
 }
+
+export {};
