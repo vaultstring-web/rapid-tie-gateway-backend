@@ -5,6 +5,7 @@ import { AuthRequest } from '../middlewares/auth';
 import { AppError } from '../utils/errorHandler';
 import ExcelJS from 'exceljs';
 import { parse as parseCsv } from 'csv-parse';
+import { emitNotification } from '../server'; // ADD THIS IMPORT
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -146,7 +147,6 @@ export class FinanceController {
         recentBatches,
         paidRequests,
       ] = await Promise.all([
-        // Disbursements that are approved but not yet in a batch
         prisma.dsaRequest.count({
           where: {
             organizationId: orgId,
@@ -154,16 +154,13 @@ export class FinanceController {
             disbursementItem: null,
           },
         }),
-        // Approved amounts total
         prisma.dsaRequest.aggregate({
           where: { organizationId: orgId, status: 'APPROVED', disbursementItem: null },
           _sum: { totalAmount: true },
         }),
-        // Active (processing) batches
         prisma.disbursementBatch.count({
           where: { organizationId: orgId, status: 'processing' },
         }),
-        // Completed batches this month
         prisma.disbursementBatch.count({
           where: {
             organizationId: orgId,
@@ -173,13 +170,11 @@ export class FinanceController {
             },
           },
         }),
-        // Budgets summary
         prisma.budget.findMany({
           where: { organizationId: orgId },
           include: { department: { select: { name: true } } },
           orderBy: { fiscalYear: 'desc' },
         }),
-        // Recent batches
         prisma.disbursementBatch.findMany({
           where: { organizationId: orgId },
           orderBy: { createdAt: 'desc' },
@@ -200,7 +195,6 @@ export class FinanceController {
         }),
       ]);
 
-      // Budget utilization
       const totalAllocated = budgets.reduce((sum, b) => sum + b.allocated, 0);
       const totalSpent = budgets.reduce((sum, b) => sum + b.spent, 0);
       const totalCommitted = budgets.reduce((sum, b) => sum + b.committed, 0);
@@ -208,7 +202,6 @@ export class FinanceController {
         ? parseFloat(((totalSpent / totalAllocated) * 100).toFixed(2))
         : 0;
 
-      // Budget alerts — departments over 80% spent
       const budgetAlerts = budgets.filter(
         (b) => b.allocated > 0 && (b.spent / b.allocated) >= 0.8
       );
@@ -525,7 +518,6 @@ export class FinanceController {
         return next(new AppError('requestIds array is required and must not be empty', 400));
       }
 
-      // Validate all requests belong to this org, are APPROVED, and not yet in a batch
       const requests = await prisma.dsaRequest.findMany({
         where: {
           id: { in: requestIds },
@@ -554,7 +546,6 @@ export class FinanceController {
       const totalAmount = requests.reduce((sum, r) => sum + r.totalAmount, 0);
       const batchNumber = generateBatchNumber();
 
-      // Create batch and all disbursement items in a transaction
       const batch = await prisma.$transaction(async (tx) => {
         const newBatch = await tx.disbursementBatch.create({
           data: {
@@ -568,14 +559,12 @@ export class FinanceController {
           },
         });
 
-        // Create a DisbursementItem for each request
         await Promise.all(
           requests.map((r) => {
             const employeeName = `${r.employee.user.firstName ?? ''} ${r.employee.user.lastName ?? ''}`.trim();
             const mobileMoney = r.employee.mobileMoney as any;
             const bankAccount = r.employee.bankAccount as any;
 
-            // Prefer mobile money, fall back to bank
             const paymentMethod = mobileMoney?.provider ? 'mobile_money' : 'bank';
             const recipientPhone = mobileMoney?.phoneNumber ?? null;
             const recipientAccount = bankAccount?.accountNumber ?? null;
@@ -609,7 +598,7 @@ export class FinanceController {
   }
 
   // ======================
-  // 🔄 Process / Update Batch Status
+  // 🔄 Process / Update Batch Status (UPDATED with emitNotification)
   // ======================
   async processBatch(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -630,7 +619,6 @@ export class FinanceController {
 
       if (!batch) return next(new AppError('Batch not found', 404));
 
-      // Prevent illegal transitions
       if (batch.status === 'completed') {
         return next(new AppError('Batch is already completed', 400));
       }
@@ -638,14 +626,12 @@ export class FinanceController {
       const updateData: any = { status };
       if (status === 'completed') {
         updateData.processedAt = new Date();
-        // Mark all items as success and DSA requests as PAID
         await prisma.$transaction(async (tx) => {
           await tx.disbursementItem.updateMany({
             where: { batchId: id, status: 'pending' },
             data: { status: 'success', processedAt: new Date() },
           });
 
-          // Get all request IDs from this batch
           const items = await tx.disbursementItem.findMany({
             where: { batchId: id },
             select: { requestId: true },
@@ -662,6 +648,41 @@ export class FinanceController {
             data: updateData,
           });
         });
+
+        // Create notifications for each paid request and send real-time WebSocket notifications
+        const items = await prisma.disbursementItem.findMany({
+          where: { batchId: id },
+          include: {
+            request: {
+              include: {
+                employee: {
+                  include: {
+                    user: { select: { id: true } },
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        for (const item of items) {
+          if (item.request && item.request.employee.user.id) {
+            const notification = await prisma.notification.create({
+              data: {
+                userId: item.request.employee.user.id,
+                type: 'DSA_PAID',
+                title: 'DSA Payment Processed',
+                message: `Your DSA request ${item.request.requestNumber} for ${item.request.destination} has been paid. Amount: MWK ${item.request.totalAmount.toLocaleString()}`,
+                data: { requestId: item.request.id, requestNumber: item.request.requestNumber, batchId: id },
+              },
+            });
+            
+            // Send real-time WebSocket notification
+            if (notification) {
+              emitNotification(item.request.employee.user.id, notification);
+            }
+          }
+        }
       } else {
         await prisma.disbursementBatch.update({ where: { id }, data: updateData });
       }

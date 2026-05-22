@@ -3,6 +3,7 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middlewares/auth';
 import { prisma } from '../server';
 import { AppError } from '../utils/errorHandler';
+import { emitNotification } from '../server'; // ADD THIS IMPORT
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 async function getApprover(req: AuthRequest, next: NextFunction) {
@@ -62,7 +63,6 @@ export class ApproverController {
           where: { organizationId: orgId, status: 'PENDING' },
           _sum: { totalAmount: true },
         }),
-        // Recent approval actions by THIS approver
         prisma.approval.findMany({
           where: { approverId: approverProfile.id },
           orderBy: { approvedAt: 'desc' },
@@ -80,7 +80,6 @@ export class ApproverController {
             },
           },
         }),
-        // Team summary — pending requests by department
         prisma.department.findMany({
           where: { organizationId: orgId },
           include: {
@@ -409,7 +408,7 @@ export class ApproverController {
   }
 
   // ======================
-  // ✅ / ❌ Approve / Reject
+  // ✅ / ❌ Approve / Reject (UPDATED with emitNotification)
   // ======================
   processAction(
     action: 'approve' | 'reject'
@@ -457,13 +456,13 @@ export class ApproverController {
           data: { status: newRequestStatus, updatedAt: new Date() },
         });
 
-        // Notify the employee
+        // Notify the employee and send real-time WebSocket notification
         const request = await prisma.dsaRequest.findUnique({
           where: { id },
           include: { employee: { include: { user: { select: { id: true } } } } },
         });
         if (request) {
-          await prisma.notification.create({
+          const notification = await prisma.notification.create({
             data: {
               userId: request.employee.user.id,
               type: action === 'approve' ? 'DSA_APPROVED' : 'DSA_REJECTED',
@@ -471,7 +470,12 @@ export class ApproverController {
               message: `Your request ${dsaRequest.requestNumber} for ${dsaRequest.destination} has been ${approvalStatus}.${comments ? ` Comment: ${comments}` : ''}`,
               data: { requestId: id, requestNumber: dsaRequest.requestNumber },
             },
-          }).catch(() => {}); // non-fatal
+          }).catch(() => null);
+          
+          // Send real-time WebSocket notification
+          if (notification) {
+            emitNotification(request.employee.user.id, notification);
+          }
         }
 
         res.json({
