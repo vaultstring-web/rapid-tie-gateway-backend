@@ -175,16 +175,13 @@ io.on('connection', (socket) => {
         });
         socket.emit('unread-count', { count: unreadCount });
       } else {
-        console.error('User not found for token');
+        logger.warn(`Socket auth failed: user not found for token (socket ${socket.id})`);
+        socket.emit('auth-error', { message: 'User not found' });
       }
     } catch (error) {
-      console.error('Socket authentication error:', error);
+      logger.warn(`Socket auth failed: invalid token (socket ${socket.id})`);
+      socket.emit('auth-error', { message: 'Authentication failed' });
     }
-  });
-
-  socket.on('join-notifications', (userId: string) => {
-    socket.join(`user-${userId}`);
-    logger.info(`Client ${socket.id} joined notifications for user ${userId}`);
   });
 
   socket.on('join-event-sales', async (eventId: string) => {
