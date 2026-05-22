@@ -8,11 +8,13 @@ import { AppError } from '../utils/errorHandler';
 export type UserWithRelations = {
   id: string;
   email: string;
-  password: string;
+  // password is intentionally omitted — never expose the hash on req.user
   firstName: string;
   lastName: string;
   role: string;
   phone?: string | null;
+  emailVerified?: boolean;
+  twoFactorEnabled?: boolean;
   lastLoginAt?: Date | null;
   passwordChangedAt?: Date | null;
   createdAt?: Date;
@@ -56,7 +58,20 @@ export const authenticate = async (
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
-      include: {
+      select: {
+        id: true,
+        email: true,
+        // password deliberately excluded
+        firstName: true,
+        lastName: true,
+        role: true,
+        phone: true,
+        emailVerified: true,
+        twoFactorEnabled: true,
+        lastLoginAt: true,
+        passwordChangedAt: true,
+        createdAt: true,
+        updatedAt: true,
         merchant: true,
         organizer: true,
         employee: true,

@@ -649,8 +649,19 @@ async verify2FA(req: Request, res: Response, next: NextFunction): Promise<void> 
         return next(new AppError('Current password and new password are required', 400));
       }
 
+      // Re-fetch the password hash only where it is needed — it is intentionally
+      // absent from req.user (UserWithRelations) for security.
+      const userWithPassword = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { password: true },
+      });
+
+      if (!userWithPassword) {
+        return next(new AppError('User not found', 404));
+      }
+
       // Verify current password
-      const isValid = await bcrypt.compare(currentPassword, req.user.password);
+      const isValid = await bcrypt.compare(currentPassword, userWithPassword.password);
       if (!isValid) {
         return next(new AppError('Current password is incorrect', 400));
       }
