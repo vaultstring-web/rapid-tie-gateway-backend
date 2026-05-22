@@ -10,6 +10,8 @@ import { logger } from '../utils/logger';
 import { sendVerificationEmail } from '../utils/email';
 import speakeasy from 'speakeasy';
 import QRCode from 'qrcode';
+import { invalidateUserCache } from '../middlewares/auth';
+
 export class AuthController {
   /**
    * Register a new user
@@ -595,30 +597,35 @@ async verify2FA(req: Request, res: Response, next: NextFunction): Promise<void> 
    * Logout user
    */
   async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const token = req.token;
+  try {
+    const token = req.token;
+    const userId = req.user?.id;
 
-      if (!token) {
-        return next(new AppError('No token provided', 401));
-      }
-
-      // Delete session
-      await prisma.session.deleteMany({ where: { token } });
-
-      // Clear cookie
-      res.clearCookie('token');
-
-      // Log activity
-      if (req.user) {
-        await this.logActivity(req.user.id, 'LOGOUT', req);
-      }
-
-      res.json({ success: true, message: 'Logout successful' });
-    } catch (error) {
-      next(error);
+    if (!token) {
+      return next(new AppError('No token provided', 401));
     }
-  }
 
+    // Invalidate user cache in Redis
+    if (userId) {
+      await invalidateUserCache(userId);
+    }
+
+    // Delete session
+    await prisma.session.deleteMany({ where: { token } });
+
+    // Clear cookie
+    res.clearCookie('token');
+
+    // Log activity
+    if (req.user) {
+      await this.logActivity(req.user.id, 'LOGOUT', req);
+    }
+
+    res.json({ success: true, message: 'Logout successful' });
+  } catch (error) {
+    next(error);
+  }
+}
   /**
    * Get current authenticated user
    */
