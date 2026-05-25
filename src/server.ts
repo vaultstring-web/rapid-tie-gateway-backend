@@ -48,6 +48,7 @@ import adminTransactionRoutes from './routes/admin/transactionMonitor.routes';
 import adminSecurityRoutes from './routes/admin/securityDashboard.routes';
 import adminAuditRoutes from './routes/admin/auditLog.routes';
 import adminFraudRoutes from './routes/admin/fraudDetection.routes';
+import adminSettlementRoutes from './routes/admin/settlement.routes';
 
 // Import transaction monitor WebSocket functions
 import { 
@@ -77,7 +78,14 @@ app.use(cors({
 }));
 app.use(compression());
 app.use(morgan('combined', { stream: { write: (message) => logger.info(message.trim()) } }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, _res, buf) => {
+    // Capture raw body for webhook signature verification.
+    // Safe to store for all JSON requests; only used by webhook routes.
+    (req as any).rawBody = buf;
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 app.use('/api', limiter);
@@ -126,6 +134,7 @@ app.use('/api/admin', adminTransactionRoutes);
 app.use('/api/admin', adminSecurityRoutes);
 app.use('/api/admin', adminAuditRoutes);
 app.use('/api/admin', adminFraudRoutes);
+app.use('/api/admin', adminSettlementRoutes);
 
 // Initialize recurring jobs after server starts
 initializeRecurringJobs().catch(console.error);
@@ -147,12 +156,27 @@ io.on('connection', (socket) => {
   logger.info(`Client connected: ${socket.id}`);
 
   // AUTHENTICATION for notifications
-  socket.on('authenticate', async (token: string) => {
+  socket.on('authenticate', async (tokenParam?: string) => {
     try {
       const jwtSecret = process.env.JWT_SECRET;
       if (!jwtSecret) {
         throw new Error('JWT_SECRET not defined');
       }
+
+      // Get token from parameter or httpOnly cookie
+      let token: string | undefined = tokenParam;
+      if (!token && socket.handshake.headers.cookie) {
+        const cookieHeader = socket.handshake.headers.cookie;
+        const tokenMatch = cookieHeader.match(/token=([^;]+)/);
+        if (tokenMatch) {
+          token = tokenMatch[1];
+        }
+      }
+
+      if (!token) {
+        throw new Error('No token provided');
+      }
+
       const decoded = jwt.verify(token, jwtSecret) as { id: string };
       const user = await prisma.user.findUnique({ where: { id: decoded.id } });
       
@@ -165,16 +189,13 @@ io.on('connection', (socket) => {
         });
         socket.emit('unread-count', { count: unreadCount });
       } else {
-        console.error('User not found for token');
+        logger.warn(`Socket auth failed: user not found for token (socket ${socket.id})`);
+        socket.emit('auth-error', { message: 'User not found' });
       }
     } catch (error) {
-      console.error('Socket authentication error:', error);
+      logger.warn(`Socket auth failed: invalid token (socket ${socket.id})`);
+      socket.emit('auth-error', { message: 'Authentication failed' });
     }
-  });
-
-  socket.on('join-notifications', (userId: string) => {
-    socket.join(`user-${userId}`);
-    logger.info(`Client ${socket.id} joined notifications for user ${userId}`);
   });
 
   socket.on('join-event-sales', async (eventId: string) => {

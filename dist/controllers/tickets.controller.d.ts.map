@@ -1,1 +1,0 @@
-{"version":3,"file":"tickets.controller.d.ts","sourceRoot":"","sources":["../../src/controllers/tickets.controller.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,OAAO,EAAE,QAAQ,EAAE,YAAY,EAAE,MAAM,SAAS,CAAC;AAI1D,eAAO,MAAM,eAAe,GAC1B,KAAK,OAAO,EACZ,KAAK,QAAQ,EACb,MAAM,YAAY,kBAmBnB,CAAC;AACF,eAAO,MAAM,aAAa,GACxB,KAAK,OAAO,EACZ,KAAK,QAAQ,EACb,MAAM,YAAY,KAClB,OAAO,CAAC,IAAI,CAiEb,CAAC"}
