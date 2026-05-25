@@ -5,7 +5,7 @@ import { AuthRequest } from '../middlewares/auth';
 import { AppError } from '../utils/errorHandler';
 import ExcelJS from 'exceljs';
 import { parse as parseCsv } from 'csv-parse';
-import { emitNotification } from '../server'; // ADD THIS IMPORT
+import { emitNotification } from '../server';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -92,22 +92,40 @@ async function parseUpload(file: Express.Multer.File): Promise<UploadedDisbursem
   throw new AppError('Only .csv and .xlsx files are supported', 400);
 }
 
+// REPLACE the entire eventInsightsForRequests function with:
 async function eventInsightsForRequests(
   requests: Array<{ destination: string; startDate: Date; endDate: Date; totalAmount: number }>
 ) {
-  const perRequestEvents = await Promise.all(
-    requests.map((request) =>
-      prisma.event.findMany({
-        where: {
-          city: { equals: request.destination, mode: 'insensitive' },
-          startDate: { lte: request.endDate },
-          endDate: { gte: request.startDate },
-        },
-        select: { id: true, name: true, city: true, startDate: true, endDate: true, category: true },
-        take: 10,
-      })
-    )
-  );
+  if (!requests.length) return [];
+
+  // Collect all unique destinations
+  const uniqueDestinations = [...new Set(requests.map(r => r.destination))];
+
+  // Single database call
+  const allEvents = await prisma.event.findMany({
+    where: {
+      city: { in: uniqueDestinations, mode: 'insensitive' },
+    },
+    select: { id: true, name: true, city: true, startDate: true, endDate: true, category: true },
+  });
+
+  // Build in-memory map: destination -> events
+  const eventsByCity = new Map<string, any[]>();
+  for (const event of allEvents) {
+    if (!eventsByCity.has(event.city)) {
+      eventsByCity.set(event.city, []);
+    }
+    eventsByCity.get(event.city)!.push(event);
+  }
+
+  // Process each request (in-memory filtering)
+  const perRequestEvents = requests.map(request => {
+    let events = eventsByCity.get(request.destination) || [];
+    events = events.filter(event => 
+      event.startDate <= request.endDate && event.endDate >= request.startDate
+    ).slice(0, 10);
+    return events;
+  });
 
   const regionMap: Record<string, { city: string; count: number; amount: number }> = {};
   perRequestEvents.forEach((events, index) => {
@@ -293,111 +311,125 @@ export class FinanceController {
     }
   }
 
-  // ======================
-  // 📥 Ready to Disburse (Approved, not yet in batch)
-  // ======================
-  async getDisbursements(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const officer = await getFinanceOfficer(req, next);
-      if (!officer) return;
+ // ======================
+// 📥 Ready to Disburse (Approved, not yet in batch)
+// ======================
+async getDisbursements(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const officer = await getFinanceOfficer(req, next);
+    if (!officer) return;
 
-      const { page = '1', limit = '25', search } = req.query as Record<string, string>;
-      const pageNum = Math.max(1, parseInt(page, 10));
-      const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
-      const skip = (pageNum - 1) * take;
+    const { page = '1', limit = '25', search } = req.query as Record<string, string>;
+    const pageNum = Math.max(1, parseInt(page, 10));
+    const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
+    const skip = (pageNum - 1) * take;
 
-      const where: any = {
-        organizationId: officer.organizationId,
-        status: 'APPROVED',
-        disbursementItem: null,
-      };
+    const where: any = {
+      organizationId: officer.organizationId,
+      status: 'APPROVED',
+      disbursementItem: null,
+    };
 
-      if (search) {
-        where.OR = [
-          { destination: { contains: search, mode: 'insensitive' } },
-          { purpose: { contains: search, mode: 'insensitive' } },
-          { requestNumber: { contains: search, mode: 'insensitive' } },
-          { employee: { user: { firstName: { contains: search, mode: 'insensitive' } } } },
-          { employee: { user: { lastName: { contains: search, mode: 'insensitive' } } } },
-        ];
-      }
+    if (search) {
+      where.OR = [
+        { destination: { contains: search, mode: 'insensitive' } },
+        { purpose: { contains: search, mode: 'insensitive' } },
+        { requestNumber: { contains: search, mode: 'insensitive' } },
+        { employee: { user: { firstName: { contains: search, mode: 'insensitive' } } } },
+        { employee: { user: { lastName: { contains: search, mode: 'insensitive' } } } },
+      ];
+    }
 
-      const [requests, total, sumAgg] = await Promise.all([
-        prisma.dsaRequest.findMany({
-          where,
-          orderBy: { submittedAt: 'asc' },
-          skip,
-          take,
-          include: {
-            employee: {
-              include: {
-                user: { select: { firstName: true, lastName: true, email: true } },
-                department: { select: { name: true } },
-              },
+    const [requests, total, sumAgg] = await Promise.all([
+      prisma.dsaRequest.findMany({
+        where,
+        orderBy: { submittedAt: 'asc' },
+        skip,
+        take,
+        include: {
+          employee: {
+            include: {
+              user: { select: { firstName: true, lastName: true, email: true } },
+              department: { select: { name: true } },
             },
           },
-        }),
-        prisma.dsaRequest.count({ where }),
-        prisma.dsaRequest.aggregate({ where, _sum: { totalAmount: true } }),
-      ]);
+        },
+      }),
+      prisma.dsaRequest.count({ where }),
+      prisma.dsaRequest.aggregate({ where, _sum: { totalAmount: true } }),
+    ]);
 
-      const rows = await Promise.all(
-        requests.map(async (request) => {
-          const events = await prisma.event.findMany({
-            where: {
-              city: { equals: request.destination, mode: 'insensitive' },
-              startDate: { lte: request.endDate },
-              endDate: { gte: request.startDate },
-            },
-            select: {
-              id: true,
-              name: true,
-              city: true,
-              startDate: true,
-              endDate: true,
-            },
-            take: 10,
-          });
+    // OPTIMIZATION: Single database call for all events instead of N+1
+    const uniqueDestinations = [...new Set(requests.map(r => r.destination))];
+    
+    const allEvents = await prisma.event.findMany({
+      where: {
+        city: { in: uniqueDestinations, mode: 'insensitive' },
+      },
+      select: {
+        id: true,
+        name: true,
+        city: true,
+        startDate: true,
+        endDate: true,
+      },
+    });
 
-          const mobileMoney = request.employee.mobileMoney as Record<string, unknown> | null;
-          const bankAccount = request.employee.bankAccount as Record<string, unknown> | null;
-          const recipientValid = Boolean(
-            (mobileMoney && mobileMoney.phoneNumber) ||
-            (bankAccount && bankAccount.accountNumber)
-          );
+    // Build in-memory map: destination -> events
+    const eventsByCity = new Map<string, any[]>();
+    for (const event of allEvents) {
+      if (!eventsByCity.has(event.city)) {
+        eventsByCity.set(event.city, []);
+      }
+      eventsByCity.get(event.city)!.push(event);
+    }
 
-          return {
-            ...request,
-            hasEvents: events.length > 0,
-            events,
-            recipientValidation: {
-              valid: recipientValid,
-              hasMobileMoney: Boolean(mobileMoney && mobileMoney.phoneNumber),
-              hasBankAccount: Boolean(bankAccount && bankAccount.accountNumber),
-            },
-          };
-        })
+    // Process rows using in-memory data (no additional DB calls)
+    const rows = requests.map((request) => {
+      let events = eventsByCity.get(request.destination) || [];
+      events = events
+        .filter(event => 
+          event.startDate <= request.endDate && event.endDate >= request.startDate
+        )
+        .slice(0, 10);
+
+      const mobileMoney = request.employee.mobileMoney as Record<string, unknown> | null;
+      const bankAccount = request.employee.bankAccount as Record<string, unknown> | null;
+      const recipientValid = Boolean(
+        (mobileMoney && mobileMoney.phoneNumber) ||
+        (bankAccount && bankAccount.accountNumber)
       );
 
-      res.json({
-        success: true,
-        data: {
-          requests: rows,
-          totalAmount: sumAgg._sum.totalAmount ?? 0,
+      return {
+        ...request,
+        hasEvents: events.length > 0,
+        events,
+        recipientValidation: {
+          valid: recipientValid,
+          hasMobileMoney: Boolean(mobileMoney && mobileMoney.phoneNumber),
+          hasBankAccount: Boolean(bankAccount && bankAccount.accountNumber),
         },
-        meta: {
-          total,
-          page: pageNum,
-          limit: take,
-          totalPages: Math.ceil(total / take),
-          hasNext: pageNum * take < total,
-        },
-      });
-    } catch (err) {
-      next(err);
-    }
-  }
+      };
+    });
 
+    res.json({
+      success: true,
+      data: {
+        requests: rows,
+        totalAmount: sumAgg._sum.totalAmount ?? 0,
+      },
+      meta: {
+        total,
+        page: pageNum,
+        limit: take,
+        totalPages: Math.ceil(total / take),
+        hasNext: pageNum * take < total,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
   // ======================
   // 📦 Disbursement Batches (list)
   // ======================
@@ -598,26 +630,59 @@ export class FinanceController {
   }
 
   // ======================
-  // 🔄 Process / Update Batch Status (UPDATED with emitNotification)
-  // ======================
-  async processBatch(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const officer = await getFinanceOfficer(req, next);
-      if (!officer) return;
+// 🔄 Process / Update Batch Status
+// ======================
+async processBatch(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const officer = await getFinanceOfficer(req, next);
+    if (!officer) return;
 
-      const { id } = req.params;
-      const { status } = req.body as { status?: string };
+    const { id } = req.params;
+    const { status } = req.body as { status?: string };
 
-      const validStatuses = ['processing', 'completed', 'failed'];
-      if (!status || !validStatuses.includes(status)) {
-        return next(new AppError(`status must be one of: ${validStatuses.join(', ')}`, 400));
-      }
+    const validStatuses = ['processing', 'completed', 'failed'];
+    if (!status || !validStatuses.includes(status)) {
+      return next(new AppError(`status must be one of: ${validStatuses.join(', ')}`, 400));
+    }
 
-      const batch = await prisma.disbursementBatch.findFirst({
-        where: { id, organizationId: officer.organizationId },
-      });
+    const batch = await prisma.disbursementBatch.findFirst({
+      where: { id, organizationId: officer.organizationId },
+      include: {
+        items: {
+          include: {
+            request: {
+              include: {
+                employee: {
+                  include: {
+                    department: true,
+                    user: { select: { id: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
 
-      if (!batch) return next(new AppError('Batch not found', 404));
+    if (!batch) return next(new AppError('Batch not found', 404));
+
+    // Prevent illegal transitions
+    if (batch.status === 'completed') {
+      return next(new AppError('Batch is already completed', 400));
+    }
+
+    const updateData: any = { status };
+    
+    if (status === 'completed') {
+      updateData.processedAt = new Date();
+      
+      await prisma.$transaction(async (tx) => {
+        // Mark all items as success
+        await tx.disbursementItem.updateMany({
+          where: { batchId: id, status: 'pending' },
+          data: { status: 'success', processedAt: new Date() },
+        });
 
       if (batch.status === 'completed') {
         return next(new AppError('Batch is already completed', 400));
@@ -637,16 +702,53 @@ export class FinanceController {
             select: { requestId: true },
           });
           const reqIds = items.map((i) => i.requestId);
+        // Get all request IDs from this batch
+        const items = await tx.disbursementItem.findMany({
+          where: { batchId: id },
+          select: { requestId: true, amount: true },
+        });
 
-          await tx.dsaRequest.updateMany({
-            where: { id: { in: reqIds } },
-            data: { status: 'PAID' },
+        // Update budgets: move from committed to spent for each request's department
+        for (const item of items) {
+          const request = await tx.dsaRequest.findUnique({
+            where: { id: item.requestId },
+            include: {
+              employee: {
+                include: {
+                  department: true,
+                  user: { select: { id: true } },
+                },
+              },
+            },
           });
 
-          await tx.disbursementBatch.update({
-            where: { id },
-            data: updateData,
-          });
+          if (request && request.employee.departmentId) {
+            const budget = await tx.budget.findFirst({
+              where: {
+                organizationId: officer.organizationId,
+                departmentId: request.employee.departmentId,
+                fiscalYear: new Date().getFullYear().toString(),
+              },
+            });
+
+            if (budget) {
+              // Move amount from committed to spent
+              await tx.budget.update({
+                where: { id: budget.id },
+                data: {
+                  spent: { increment: item.amount },
+                  committed: { decrement: item.amount },
+                },
+              });
+            }
+          }
+        }
+
+        // Update DSA requests status to PAID and send notifications
+        const reqIds = items.map((i) => i.requestId);
+        await tx.dsaRequest.updateMany({
+          where: { id: { in: reqIds } },
+          data: { status: 'PAID' },
         });
 
         // Create notifications for each paid request and send real-time WebSocket notifications
@@ -687,14 +789,53 @@ export class FinanceController {
         await prisma.disbursementBatch.update({ where: { id }, data: updateData });
       }
 
-      const updated = await prisma.disbursementBatch.findUnique({ where: { id } });
+        // Create notifications for each paid request
+        for (const item of items) {
+          const request = await tx.dsaRequest.findUnique({
+            where: { id: item.requestId },
+            include: {
+              employee: {
+                include: {
+                  user: { select: { id: true } },
+                },
+              },
+            },
+          });
+          
+          if (request && request.employee.user.id) {
+            const notification = await tx.notification.create({
+              data: {
+                userId: request.employee.user.id,
+                type: 'DSA_PAID',
+                title: 'DSA Payment Processed',
+                message: `Your DSA request ${request.requestNumber} for ${request.destination} has been paid. Amount: MWK ${request.totalAmount.toLocaleString()}`,
+                data: { requestId: request.id, requestNumber: request.requestNumber, batchId: id },
+              },
+            });
+            
+            // Send real-time WebSocket notification
+            if (notification) {
+              emitNotification(request.employee.user.id, notification);
+            }
+          }
+        }
 
-      res.json({ success: true, data: { batch: updated } });
-    } catch (err) {
-      next(err);
+        await tx.disbursementBatch.update({
+          where: { id },
+          data: updateData,
+        });
+      });
+    } else {
+      await prisma.disbursementBatch.update({ where: { id }, data: updateData });
     }
-  }
 
+    const updated = await prisma.disbursementBatch.findUnique({ where: { id } });
+
+    res.json({ success: true, data: { batch: updated } });
+  } catch (err) {
+    next(err);
+  }
+}
   // ======================
   // ⬆️ Bulk Disbursement Upload
   // ======================
@@ -871,6 +1012,487 @@ export class FinanceController {
       });
 
       res.json({ success: true, data: { user: updatedUser } });
+    } catch (err) {
+      next(err);
+    }
+  }
+  // ======================
+  // 💰 DSA Rates Management
+  // ======================
+
+  // GET /api/finance/rates - List all DSA rates
+  async getDsaRates(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const officer = await getFinanceOfficer(req, next);
+      if (!officer) return;
+
+      const { location, grade, page = '1', limit = '50' } = req.query as Record<string, string>;
+      const pageNum = Math.max(1, parseInt(page, 10));
+      const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+      const skip = (pageNum - 1) * take;
+
+      const where: any = {
+        organizationId: officer.organizationId,
+      };
+
+      if (location) {
+        where.location = { contains: location, mode: 'insensitive' };
+      }
+      if (grade) {
+        where.grade = grade;
+      }
+
+      const [rates, totalCount] = await Promise.all([
+        prisma.dsaRate.findMany({
+          where,
+          orderBy: [{ location: 'asc' }, { grade: 'asc' }],
+          skip,
+          take,
+        }),
+        prisma.dsaRate.count({ where }),
+      ]);
+
+      res.json({
+        success: true,
+        data: {
+          rates,
+          pagination: {
+            currentPage: pageNum,
+            totalPages: Math.ceil(totalCount / take),
+            totalItems: totalCount,
+            itemsPerPage: take,
+            hasNextPage: pageNum * take < totalCount,
+            hasPrevPage: pageNum > 1,
+          },
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  // POST /api/finance/rates - Create new DSA rate
+  async createDsaRate(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const officer = await getFinanceOfficer(req, next);
+      if (!officer) return;
+
+      const { location, grade, perDiemRate, accommodationRate, effectiveFrom, effectiveTo } = req.body;
+
+      if (!location || !perDiemRate || !effectiveFrom) {
+        res.status(400).json({
+          success: false,
+          message: 'Missing required fields: location, perDiemRate, effectiveFrom',
+        });
+        return;
+      }
+
+      // Check if rate already exists for this location and grade
+      const existingRate = await prisma.dsaRate.findFirst({
+        where: {
+          organizationId: officer.organizationId,
+          location,
+          grade: grade || null,
+          effectiveFrom: { lte: new Date(effectiveFrom) },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gte: new Date(effectiveFrom) } }],
+        },
+      });
+
+      if (existingRate) {
+        res.status(409).json({
+          success: false,
+          message: 'A DSA rate already exists for this location and grade during this period',
+        });
+        return;
+      }
+
+      const newRate = await prisma.dsaRate.create({
+        data: {
+          organizationId: officer.organizationId,
+          location,
+          grade: grade || null,
+          perDiemRate,
+          accommodationRate: accommodationRate || null,
+          effectiveFrom: new Date(effectiveFrom),
+          effectiveTo: effectiveTo ? new Date(effectiveTo) : null,
+        },
+      });
+
+      await prisma.activityLog.create({
+        data: {
+          userId: req.user!.id,
+          action: 'DSA_RATE_CREATED',
+          entity: 'DsaRate',
+          entityId: newRate.id,
+          newValue: { location, grade, perDiemRate, accommodationRate },
+          ipAddress: req.ip,
+        },
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'DSA rate created successfully',
+        data: newRate,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  // PUT /api/finance/rates/:id - Update DSA rate
+  async updateDsaRate(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const officer = await getFinanceOfficer(req, next);
+      if (!officer) return;
+
+      const { id } = req.params;
+      const { location, grade, perDiemRate, accommodationRate, effectiveFrom, effectiveTo } = req.body;
+
+      const existingRate = await prisma.dsaRate.findFirst({
+        where: { id, organizationId: officer.organizationId },
+      });
+
+      if (!existingRate) {
+        res.status(404).json({ success: false, message: 'DSA rate not found' });
+        return;
+      }
+
+      const updatedRate = await prisma.dsaRate.update({
+        where: { id },
+        data: {
+          location: location !== undefined ? location : undefined,
+          grade: grade !== undefined ? grade : undefined,
+          perDiemRate: perDiemRate !== undefined ? perDiemRate : undefined,
+          accommodationRate: accommodationRate !== undefined ? accommodationRate : undefined,
+          effectiveFrom: effectiveFrom !== undefined ? new Date(effectiveFrom) : undefined,
+          effectiveTo: effectiveTo !== undefined ? (effectiveTo ? new Date(effectiveTo) : null) : undefined,
+        },
+      });
+
+      await prisma.activityLog.create({
+        data: {
+          userId: req.user!.id,
+          action: 'DSA_RATE_UPDATED',
+          entity: 'DsaRate',
+          entityId: updatedRate.id,
+          newValue: { location, grade, perDiemRate, accommodationRate },
+          ipAddress: req.ip,
+        },
+      });
+
+      res.json({
+        success: true,
+        message: 'DSA rate updated successfully',
+        data: updatedRate,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  // DELETE /api/finance/rates/:id - Delete DSA rate
+  async deleteDsaRate(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const officer = await getFinanceOfficer(req, next);
+      if (!officer) return;
+
+      const { id } = req.params;
+
+      const existingRate = await prisma.dsaRate.findFirst({
+        where: { id, organizationId: officer.organizationId },
+      });
+
+      if (!existingRate) {
+        res.status(404).json({ success: false, message: 'DSA rate not found' });
+        return;
+      }
+
+      await prisma.dsaRate.delete({ where: { id } });
+
+      await prisma.activityLog.create({
+        data: {
+          userId: req.user!.id,
+          action: 'DSA_RATE_DELETED',
+          entity: 'DsaRate',
+          entityId: existingRate.id,
+          oldValue: { location: existingRate.location, grade: existingRate.grade },
+          ipAddress: req.ip,
+        },
+      });
+
+      res.json({
+        success: true,
+        message: 'DSA rate deleted successfully',
+      });
+    } catch (err) {
+      next(err);
+    }
+  }  
+    // ======================
+  // 📊 Export Disbursement Batch to CSV/XLSX
+  // ======================
+  async exportDisbursementBatch(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const officer = await getFinanceOfficer(req, next);
+      if (!officer) return;
+
+      const { batchId } = req.query;
+      const format = (req.query.format as string) || 'csv';
+
+      if (!batchId) {
+        res.status(400).json({ success: false, message: 'batchId is required' });
+        return;
+      }
+
+      // Fetch batch with all related data
+      const batch = await prisma.disbursementBatch.findFirst({
+        where: { id: batchId as string, organizationId: officer.organizationId },
+        include: {
+          items: {
+            include: {
+              request: {
+                include: {
+                  employee: {
+                    include: {
+                      user: { select: { firstName: true, lastName: true, email: true } },
+                      department: { select: { name: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          financeOfficer: {
+            include: { user: { select: { firstName: true, lastName: true } } },
+          },
+        },
+      });
+
+      if (!batch) {
+        res.status(404).json({ success: false, message: 'Batch not found' });
+        return;
+      }
+
+      // Prepare data for export
+      const exportData = batch.items.map(item => ({
+        'Request ID': item.requestId,
+        'Request Number': item.request?.requestNumber || 'N/A',
+        'Employee Name': item.request?.employee?.user?.firstName && item.request?.employee?.user?.lastName
+          ? `${item.request.employee.user.firstName} ${item.request.employee.user.lastName}`
+          : item.request?.employee?.user?.email || 'N/A',
+        'Department': item.request?.employee?.department?.name || 'N/A',
+        'Destination': item.request?.destination || 'N/A',
+        'Purpose': item.request?.purpose || 'N/A',
+        'Travel Dates': item.request?.startDate && item.request?.endDate
+          ? `${new Date(item.request.startDate).toLocaleDateString()} - ${new Date(item.request.endDate).toLocaleDateString()}`
+          : 'N/A',
+        'Amount (MWK)': item.amount,
+        'Payment Method': item.paymentMethod,
+        'Recipient Name': item.recipientName,
+        'Recipient Phone': item.recipientPhone || 'N/A',
+        'Recipient Account': item.recipientAccount || 'N/A',
+        'Status': item.status,
+        'Processed At': item.processedAt ? new Date(item.processedAt).toLocaleString() : 'Pending',
+      }));
+
+      // Add batch summary
+      const summary = {
+        'Batch Number': batch.batchNumber,
+        'Created By': batch.financeOfficer?.user?.firstName && batch.financeOfficer?.user?.lastName
+          ? `${batch.financeOfficer.user.firstName} ${batch.financeOfficer.user.lastName}`
+          : 'N/A',
+        'Created At': new Date(batch.createdAt).toLocaleString(),
+        'Processed At': batch.processedAt ? new Date(batch.processedAt).toLocaleString() : 'Not processed',
+        'Status': batch.status,
+        'Total Items': batch.itemCount,
+        'Total Amount (MWK)': batch.totalAmount,
+      };
+
+      if (format === 'xlsx') {
+        // Create Excel workbook
+        const workbook = new ExcelJS.Workbook();
+        
+        // Summary sheet
+        const summarySheet = workbook.addWorksheet('Batch Summary');
+        const summaryHeaders = Object.keys(summary);
+        summarySheet.addRow(summaryHeaders);
+        summarySheet.addRow(Object.values(summary));
+        summarySheet.getRow(1).font = { bold: true };
+        
+        // Adjust column widths
+        summarySheet.columns.forEach(col => {
+          col.width = 25;
+        });
+
+        // Transactions sheet
+        const transactionsSheet = workbook.addWorksheet('Transactions');
+        const headers = Object.keys(exportData[0] || {});
+        transactionsSheet.addRow(headers);
+        transactionsSheet.getRow(1).font = { bold: true };
+        
+        exportData.forEach(row => {
+          transactionsSheet.addRow(Object.values(row));
+        });
+        
+        // Adjust column widths for transactions
+        transactionsSheet.columns.forEach(col => {
+          col.width = 20;
+        });
+
+        // Set response headers
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=batch-${batch.batchNumber}-${Date.now()}.xlsx`);
+        
+        await workbook.xlsx.write(res);
+        res.end();
+      } else {
+        // Generate CSV
+        const csvHeaders = Object.keys(exportData[0] || {}).join(',');
+        const csvRows = exportData.map(row => Object.values(row).join(','));
+        const csvContent = [csvHeaders, ...csvRows].join('\n');
+        
+        // Add summary as comments at the top
+        const summaryLines = Object.entries(summary).map(([key, value]) => `# ${key}: ${value}`);
+        const finalCsv = summaryLines.join('\n') + '\n\n' + csvContent;
+        
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=batch-${batch.batchNumber}-${Date.now()}.csv`);
+        res.send(finalCsv);
+      }
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  // ======================
+  // 📊 Export Budget Utilization Report
+  // ======================
+  async exportBudgetReport(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const officer = await getFinanceOfficer(req, next);
+      if (!officer) return;
+
+      const { fiscalYear, format = 'csv' } = req.query;
+
+      const where: any = { organizationId: officer.organizationId };
+      if (fiscalYear) where.fiscalYear = fiscalYear;
+
+      const budgets = await prisma.budget.findMany({
+        where,
+        include: {
+          department: { select: { name: true, code: true } },
+        },
+        orderBy: [{ fiscalYear: 'desc' }, { departmentId: 'asc' }],
+      });
+
+      // Prepare export data
+      const exportData = budgets.map(budget => ({
+        'Fiscal Year': budget.fiscalYear,
+        'Department': budget.department?.name || 'Unallocated',
+        'Department Code': budget.department?.code || 'N/A',
+        'Allocated (MWK)': budget.allocated,
+        'Spent (MWK)': budget.spent,
+        'Committed (MWK)': budget.committed,
+        'Remaining (MWK)': budget.allocated - budget.spent - budget.committed,
+        'Utilization %': budget.allocated > 0 
+          ? ((budget.spent / budget.allocated) * 100).toFixed(2) 
+          : '0',
+        'Commitment %': budget.allocated > 0
+          ? ((budget.committed / budget.allocated) * 100).toFixed(2)
+          : '0',
+        'Status': (budget.spent / budget.allocated) >= 0.9 ? 'Critical' 
+          : (budget.spent / budget.allocated) >= 0.75 ? 'Warning' 
+          : 'Healthy',
+      }));
+
+      // Calculate summary totals
+      const totalAllocated = budgets.reduce((sum, b) => sum + b.allocated, 0);
+      const totalSpent = budgets.reduce((sum, b) => sum + b.spent, 0);
+      const totalCommitted = budgets.reduce((sum, b) => sum + b.committed, 0);
+      const totalRemaining = totalAllocated - totalSpent - totalCommitted;
+      const overallUtilization = totalAllocated > 0 ? ((totalSpent / totalAllocated) * 100).toFixed(2) : '0';
+
+      if (format === 'xlsx') {
+        const workbook = new ExcelJS.Workbook();
+        
+        // Summary sheet
+        const summarySheet = workbook.addWorksheet('Summary');
+        summarySheet.addRow(['Metric', 'Value']);
+        summarySheet.addRow(['Total Allocated (MWK)', totalAllocated]);
+        summarySheet.addRow(['Total Spent (MWK)', totalSpent]);
+        summarySheet.addRow(['Total Committed (MWK)', totalCommitted]);
+        summarySheet.addRow(['Total Remaining (MWK)', totalRemaining]);
+        summarySheet.addRow(['Overall Utilization %', overallUtilization]);
+        summarySheet.addRow(['Generated On', new Date().toLocaleString()]);
+        summarySheet.getRow(1).font = { bold: true };
+        summarySheet.columns.forEach(col => {
+          col.width = 25;
+        });
+
+        // Budget Details sheet
+        const detailsSheet = workbook.addWorksheet('Budget Details');
+        const headers = Object.keys(exportData[0] || {});
+        detailsSheet.addRow(headers);
+        detailsSheet.getRow(1).font = { bold: true };
+        
+        exportData.forEach(row => {
+          detailsSheet.addRow(Object.values(row));
+        });
+        
+        detailsSheet.columns.forEach(col => {
+          col.width = 18;
+        });
+
+        // Alert sheet (departments with high utilization)
+        const alertsSheet = workbook.addWorksheet('Alerts');
+        alertsSheet.addRow(['Department', 'Utilization %', 'Status', 'Remaining (MWK)']);
+        alertsSheet.getRow(1).font = { bold: true };
+        
+        budgets.forEach(budget => {
+          const utilization = budget.allocated > 0 ? (budget.spent / budget.allocated) * 100 : 0;
+          if (utilization >= 75) {
+            alertsSheet.addRow([
+              budget.department?.name || 'Unallocated',
+              utilization.toFixed(2),
+              utilization >= 90 ? 'Critical' : 'Warning',
+              budget.allocated - budget.spent - budget.committed,
+            ]);
+          }
+        });
+        
+        alertsSheet.columns.forEach(col => {
+          col.width = 20;
+        });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=budget-report-${Date.now()}.xlsx`);
+        
+        await workbook.xlsx.write(res);
+        res.end();
+      } else {
+        // Generate CSV
+        const csvHeaders = Object.keys(exportData[0] || {}).join(',');
+        const csvRows = exportData.map(row => Object.values(row).join(','));
+        
+        // Add summary at the top
+        const summaryLines = [
+          `# Budget Report Generated: ${new Date().toLocaleString()}`,
+          `# Total Allocated: MWK ${totalAllocated.toLocaleString()}`,
+          `# Total Spent: MWK ${totalSpent.toLocaleString()}`,
+          `# Total Committed: MWK ${totalCommitted.toLocaleString()}`,
+          `# Total Remaining: MWK ${totalRemaining.toLocaleString()}`,
+          `# Overall Utilization: ${overallUtilization}%`,
+          '',
+          csvHeaders,
+          ...csvRows,
+        ];
+        
+        const csvContent = summaryLines.join('\n');
+        
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=budget-report-${Date.now()}.csv`);
+        res.send(csvContent);
+      }
     } catch (err) {
       next(err);
     }
