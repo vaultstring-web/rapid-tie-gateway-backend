@@ -92,36 +92,5 @@ router.put(
   validate(updateProfileSchema),
   (req, res, next) => financeController.updateProfile(req as any, res, next)
 );
-// ─── DSA Rates Management ─────────────────────────────────────────────────────
-// GET /api/finance/rates - List all DSA rates
-router.get('/rates', (req, res, next) =>
-  financeController.getDsaRates(req as any, res, next)
-);
-
-// POST /api/finance/rates - Create new DSA rate
-router.post('/rates', (req, res, next) =>
-  financeController.createDsaRate(req as any, res, next)
-);
-
-// PUT /api/finance/rates/:id - Update DSA rate
-router.put('/rates/:id', (req, res, next) =>
-  financeController.updateDsaRate(req as any, res, next)
-);
-
-// DELETE /api/finance/rates/:id - Delete DSA rate
-router.delete('/rates/:id', (req, res, next) =>
-  financeController.deleteDsaRate(req as any, res, next)
-);
-
-// ─── Export Routes ───────────────────────────────────────────────────────────
-// GET /api/finance/disbursements/export - Export batch to CSV/XLSX
-router.get('/disbursements/export', (req, res, next) =>
-  financeController.exportDisbursementBatch(req as any, res, next)
-);
-
-// GET /api/finance/budgets/export - Export budget report to CSV/XLSX
-router.get('/budgets/export', (req, res, next) =>
-  financeController.exportBudgetReport(req as any, res, next)
-);
 
 export default router;
