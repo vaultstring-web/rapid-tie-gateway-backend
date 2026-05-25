@@ -157,12 +157,27 @@ io.on('connection', (socket) => {
   logger.info(`Client connected: ${socket.id}`);
 
   // AUTHENTICATION for notifications
-  socket.on('authenticate', async (token: string) => {
+  socket.on('authenticate', async (tokenParam?: string) => {
     try {
       const jwtSecret = process.env.JWT_SECRET;
       if (!jwtSecret) {
         throw new Error('JWT_SECRET not defined');
       }
+
+      // Get token from parameter or httpOnly cookie
+      let token: string | undefined = tokenParam;
+      if (!token && socket.handshake.headers.cookie) {
+        const cookieHeader = socket.handshake.headers.cookie;
+        const tokenMatch = cookieHeader.match(/token=([^;]+)/);
+        if (tokenMatch) {
+          token = tokenMatch[1];
+        }
+      }
+
+      if (!token) {
+        throw new Error('No token provided');
+      }
+
       const decoded = jwt.verify(token, jwtSecret) as { id: string };
       const user = await prisma.user.findUnique({ where: { id: decoded.id } });
       
