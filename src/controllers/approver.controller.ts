@@ -121,7 +121,6 @@ export class ApproverController {
           where: { organizationId: orgId, status: 'PENDING' },
           _sum: { totalAmount: true },
         }),
-        // Recent approval actions by THIS approver
         prisma.approval.findMany({
           where: { approverId: approverProfile.id },
           orderBy: { approvedAt: 'desc' },
@@ -139,7 +138,6 @@ export class ApproverController {
             },
           },
         }),
-        // Team summary — pending requests by department
         prisma.department.findMany({
           where: { organizationId: orgId },
           include: {
@@ -689,6 +687,26 @@ processAction(
           return next(new AppError('No budget found for this department', 422));
         }
 
+        // Notify the employee and send real-time WebSocket notification
+        const request = await prisma.dsaRequest.findUnique({
+          where: { id },
+          include: { employee: { include: { user: { select: { id: true } } } } },
+        });
+        if (request) {
+          const notification = await prisma.notification.create({
+            data: {
+              userId: request.employee.user.id,
+              type: action === 'approve' ? 'DSA_APPROVED' : 'DSA_REJECTED',
+              title: action === 'approve' ? 'DSA Request Approved' : 'DSA Request Rejected',
+              message: `Your request ${dsaRequest.requestNumber} for ${dsaRequest.destination} has been ${approvalStatus}.${comments ? ` Comment: ${comments}` : ''}`,
+              data: { requestId: id, requestNumber: dsaRequest.requestNumber },
+            },
+          }).catch(() => null);
+          
+          // Send real-time WebSocket notification
+          if (notification) {
+            emitNotification(request.employee.user.id, notification);
+          }
         const availableBudget = budget.allocated - budget.spent - budget.committed;
         
         if (availableBudget < dsaRequest.totalAmount) {
