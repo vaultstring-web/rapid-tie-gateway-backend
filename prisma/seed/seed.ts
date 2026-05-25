@@ -1,4 +1,3 @@
-// prisma/seed/seed.ts
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
@@ -7,89 +6,51 @@ const prisma = new PrismaClient();
 
 async function main() {
   console.log('🌱 Starting database seeding...');
-  
+
+  // Clear existing data
   console.log('Clearing existing data...');
-  
-  try {
-    // Networking related (depends on events, users)
-    await prisma.message.deleteMany();
-    await prisma.connection.deleteMany();
-    await prisma.networkingProfile.deleteMany();
-    await prisma.networkingMetric.deleteMany();
-    
-    // Ticket/Event related
-    await prisma.ticket.deleteMany();
-    await prisma.ticketSale.deleteMany();
-    await prisma.waitlistEntry.deleteMany();
-    await prisma.eventView.deleteMany();
-    await prisma.ticketTier.deleteMany();
-    await prisma.paymentSession.deleteMany();
-    await prisma.event.deleteMany();
-    await prisma.eventOrganizer.deleteMany();
-    
-    // Payment/Transaction related (Refund depends on Transaction)
-    await prisma.refund.deleteMany();
-    await prisma.transaction.deleteMany();
-    await prisma.auditLog.deleteMany();
-    
-    // DSA related
-    await prisma.disbursementItem.deleteMany();
-    await prisma.disbursementBatch.deleteMany();
-    await prisma.approval.deleteMany();
-    await prisma.dsaRequest.deleteMany();
-    await prisma.dsaRate.deleteMany();
-    await prisma.budget.deleteMany();
-    await prisma.employee.deleteMany();
-    await prisma.approver.deleteMany();
-    await prisma.financeOfficer.deleteMany();
-    await prisma.department.deleteMany();
-    await prisma.organization.deleteMany();
-    
-    // Communication related
-    await prisma.communicationRecipient.deleteMany();
-    await prisma.communicationOptOut.deleteMany();
-    await prisma.communication.deleteMany();
-    
-    // Fraud related
-    await prisma.flaggedTransaction.deleteMany();
-    await prisma.fraudAlert.deleteMany();
-    await prisma.fraudRule.deleteMany();
-    
-    // Merchant/E-commerce related
-    await prisma.orderItem.deleteMany();
-    await prisma.order.deleteMany();
-    await prisma.product.deleteMany();
-    await prisma.paymentLink.deleteMany();
-    await prisma.settlement.deleteMany();
-    await prisma.webhookDelivery.deleteMany();
-    await prisma.webhook.deleteMany();
-    await prisma.apiKey.deleteMany();
-    await prisma.merchantSettings.deleteMany();
-    await prisma.merchant.deleteMany();
-    
-    // Notifications and preferences
-    await prisma.notification.deleteMany();
-    await prisma.notificationPreferences.deleteMany();
-    
-    // Activity and sessions
-    await prisma.activityLog.deleteMany();
-    await prisma.session.deleteMany();
-    await prisma.admin.deleteMany();
-    
-    // Users last
-    await prisma.user.deleteMany();
-    
-  } catch (error) {
-    console.error('Error clearing data:', error);
-  }
+  await prisma.$transaction([
+    prisma.activityLog.deleteMany(),
+    prisma.notification.deleteMany(),
+    prisma.session.deleteMany(),
+    prisma.disbursementItem.deleteMany(),
+    prisma.disbursementBatch.deleteMany(),
+    prisma.approval.deleteMany(),
+    prisma.dsaRequest.deleteMany(),
+    prisma.dsaRate.deleteMany(),
+    prisma.budget.deleteMany(),
+    prisma.employee.deleteMany(),
+    prisma.approver.deleteMany(),
+    prisma.financeOfficer.deleteMany(),
+    prisma.department.deleteMany(),
+    prisma.organization.deleteMany(),
+    prisma.ticket.deleteMany(),
+    prisma.ticketSale.deleteMany(),
+    prisma.waitlistEntry.deleteMany(),
+    prisma.eventView.deleteMany(),
+    prisma.ticketTier.deleteMany(),
+    prisma.event.deleteMany(),
+    prisma.eventOrganizer.deleteMany(),
+    prisma.paymentLink.deleteMany(),
+    prisma.product.deleteMany(),
+    prisma.orderItem.deleteMany(),
+    prisma.order.deleteMany(),
+    prisma.webhookDelivery.deleteMany(),
+    prisma.webhook.deleteMany(),
+    prisma.apiKey.deleteMany(),
+    prisma.merchantSettings.deleteMany(),
+    prisma.merchant.deleteMany(),
+    prisma.admin.deleteMany(),
+    prisma.user.deleteMany(),
+    prisma.networkingProfile.deleteMany(),
+    prisma.connection.deleteMany(),
+    prisma.message.deleteMany(),
+    prisma.networkingMetric.deleteMany(),
+  ]);
 
   console.log('✅ Existing data cleared');
-  
-  // ======================
-  // 1. Create ADMIN User
-  // ======================
-  console.log('\n📝 Creating ADMIN user...');
-  
+
+  // Create admin user
   const adminPassword = await bcrypt.hash('Admin@123', 10);
   
   const admin = await prisma.user.create({
@@ -110,11 +71,7 @@ async function main() {
   });
   console.log(`✅ Created admin: ${admin.email}`);
 
-  // ======================
-  // 2. Create Demo Merchant
-  // ======================
-  console.log('\n📝 Creating merchant...');
-  
+  // Create demo merchant
   const merchantPassword = await bcrypt.hash('Merchant@123', 10);
   
   const merchantUser = await prisma.user.create({
@@ -184,11 +141,7 @@ async function main() {
     }
   });
 
-  // ======================
-  // 3. Create Demo Organizer
-  // ======================
-  console.log('\n📝 Creating organizer...');
-  
+  // Create demo organizer
   const organizerPassword = await bcrypt.hash('Organizer@123', 10);
   
   const organizerUser = await prisma.user.create({
@@ -217,11 +170,7 @@ async function main() {
   });
   console.log(`✅ Created organizer: ${organizerUser.email}`);
 
-  // ======================
-  // 4. Create DSA Organization
-  // ======================
-  console.log('\n📝 Creating DSA organization...');
-  
+  // Create demo organization for DSA
   const org = await prisma.organization.create({
     data: {
       name: 'Ministry of Finance - Malawi',
@@ -241,11 +190,7 @@ async function main() {
   });
   console.log(`✅ Created organization: ${org.name}`);
 
-  // ======================
-  // 5. Create Departments
-  // ======================
-  console.log('\n📝 Creating departments...');
-  
+  // Create departments
   const dept1 = await prisma.department.create({
     data: {
       organizationId: org.id,
@@ -263,55 +208,51 @@ async function main() {
       budget: 20000000,
     }
   });
-  
-  const dept3 = await prisma.department.create({
-    data: {
-      organizationId: org.id,
-      name: 'Administration',
-      code: 'ADMIN',
-      budget: 15000000,
-    }
-  });
-  
-  console.log(`✅ Created departments: ${dept1.name}, ${dept2.name}, ${dept3.name}`);
+  console.log(`✅ Created departments`);
 
-  // ======================
-  // 6. Create DSA Rates (Enhanced with grade-based rates)
-  // ======================
-  console.log('\n📝 Creating DSA rates...');
-  
+  // Create DSA rates
   await prisma.dsaRate.createMany({
     data: [
-      // Lilongwe rates
-      { organizationId: org.id, location: 'Lilongwe', grade: null, perDiemRate: 45000, accommodationRate: 60000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      { organizationId: org.id, location: 'Lilongwe', grade: 'Grade 8', perDiemRate: 50000, accommodationRate: 65000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      { organizationId: org.id, location: 'Lilongwe', grade: 'Grade 7', perDiemRate: 55000, accommodationRate: 70000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      { organizationId: org.id, location: 'Lilongwe', grade: 'Grade 6', perDiemRate: 60000, accommodationRate: 75000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      // Blantyre rates
-      { organizationId: org.id, location: 'Blantyre', grade: null, perDiemRate: 40000, accommodationRate: 55000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      { organizationId: org.id, location: 'Blantyre', grade: 'Grade 8', perDiemRate: 45000, accommodationRate: 60000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      { organizationId: org.id, location: 'Blantyre', grade: 'Grade 7', perDiemRate: 50000, accommodationRate: 65000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      // Mzuzu rates
-      { organizationId: org.id, location: 'Mzuzu', grade: null, perDiemRate: 38000, accommodationRate: 50000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      { organizationId: org.id, location: 'Mzuzu', grade: 'Grade 8', perDiemRate: 42000, accommodationRate: 55000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      // Zomba rates
-      { organizationId: org.id, location: 'Zomba', grade: null, perDiemRate: 35000, accommodationRate: 45000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      // Mangochi rates
-      { organizationId: org.id, location: 'Mangochi', grade: null, perDiemRate: 42000, accommodationRate: 58000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      // Karonga rates
-      { organizationId: org.id, location: 'Karonga', grade: null, perDiemRate: 50000, accommodationRate: 70000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      { organizationId: org.id, location: 'Karonga', grade: 'Grade 7', perDiemRate: 55000, accommodationRate: 75000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
-      // Salima rates
-      { organizationId: org.id, location: 'Salima', grade: null, perDiemRate: 35000, accommodationRate: 45000, effectiveFrom: new Date('2026-01-01'), effectiveTo: null },
+      {
+        organizationId: org.id,
+        location: 'Lilongwe',
+        perDiemRate: 45000,
+        accommodationRate: 60000,
+        effectiveFrom: new Date('2026-01-01'),
+      },
+      {
+        organizationId: org.id,
+        location: 'Blantyre',
+        perDiemRate: 40000,
+        accommodationRate: 55000,
+        effectiveFrom: new Date('2026-01-01'),
+      },
+      {
+        organizationId: org.id,
+        location: 'Mzuzu',
+        perDiemRate: 38000,
+        accommodationRate: 50000,
+        effectiveFrom: new Date('2026-01-01'),
+      },
+      {
+        organizationId: org.id,
+        location: 'Zomba',
+        perDiemRate: 35000,
+        accommodationRate: 45000,
+        effectiveFrom: new Date('2026-01-01'),
+      },
+      {
+        organizationId: org.id,
+        location: 'Mangochi',
+        perDiemRate: 42000,
+        accommodationRate: 58000,
+        effectiveFrom: new Date('2026-01-01'),
+      },
     ],
   });
-  console.log(`✅ Created 14 DSA rates`);
+  console.log(`✅ Created DSA rates`);
 
-  // ======================
-  // 7. Create Budgets
-  // ======================
-  console.log('\n📝 Creating budgets...');
-  
+  // Create budgets
   await prisma.budget.createMany({
     data: [
       {
@@ -330,29 +271,16 @@ async function main() {
         spent: 0,
         committed: 0,
       },
-      {
-        organizationId: org.id,
-        departmentId: dept3.id,
-        fiscalYear: '2026-2027',
-        allocated: 15000000,
-        spent: 0,
-        committed: 0,
-      },
     ],
   });
-  console.log(`✅ Created 3 budget records`);
+  console.log(`✅ Created budgets`);
 
-  // ======================
-  // 8. Create Employees
-  // ======================
-  console.log('\n📝 Creating employees...');
-  
-  const employeePassword = await bcrypt.hash('Employee@123', 10);
-  
+  // Create employee users
+  const employee1Password = await bcrypt.hash('Employee@123', 10);
   const employee1 = await prisma.user.create({
     data: {
       email: 'john.doe@finance.gov.mw',
-      password: employeePassword,
+      password: employee1Password,
       firstName: 'John',
       lastName: 'Doe',
       role: 'EMPLOYEE',
@@ -382,7 +310,7 @@ async function main() {
   const employee2 = await prisma.user.create({
     data: {
       email: 'jane.smith@finance.gov.mw',
-      password: employeePassword,
+      password: employee1Password,
       firstName: 'Jane',
       lastName: 'Smith',
       role: 'EMPLOYEE',
@@ -406,11 +334,7 @@ async function main() {
   });
   console.log(`✅ Created employees: ${employee1.email}, ${employee2.email}`);
 
-  // ======================
-  // 9. Create Approver
-  // ======================
-  console.log('\n📝 Creating approver...');
-  
+  // Create approver
   const approverPassword = await bcrypt.hash('Approver@123', 10);
   const approver = await prisma.user.create({
     data: {
@@ -425,18 +349,14 @@ async function main() {
           organizationId: org.id,
           approvalLevel: 1,
           maxAmount: 500000,
-          departments: JSON.stringify([dept1.id, dept2.id, dept3.id]),
+          departments: JSON.stringify([dept1.id, dept2.id]),
         }
       }
     }
   });
   console.log(`✅ Created approver: ${approver.email}`);
 
-  // ======================
-  // 10. Create Finance Officer
-  // ======================
-  console.log('\n📝 Creating finance officer...');
-  
+  // Create finance officer
   const financePassword = await bcrypt.hash('Finance@123', 10);
   const financeOfficer = await prisma.user.create({
     data: {
@@ -456,9 +376,9 @@ async function main() {
   });
   console.log(`✅ Created finance officer: ${financeOfficer.email}`);
 
-  // ======================
-  // 11. Create Networking Test Users
-  // ======================
+  // ============================================
+  // CREATE JANE AND JOHN USERS (for networking)
+  // ============================================
   console.log('\n📝 Creating networking test users...');
   
   const janePassword = await bcrypt.hash('Test@123', 10);
@@ -491,9 +411,7 @@ async function main() {
   });
   console.log(`✅ Created user: ${john.email}`);
 
-  // ======================
-  // 12. Create Events and Tickets
-  // ======================
+  // Create sample events - MAKING SURE ORGANIZER EXISTS
   let testEvent: any = null;
   
   if (organizerUser.organizer) {
@@ -590,7 +508,9 @@ async function main() {
     });
     console.log(`✅ Created event: ${event2.name}`);
 
-    // Test event for ticketing system
+    // ============================================
+    // ADD TEST EVENT FOR YOUR TICKETING SYSTEM
+    // ============================================
     console.log('\n📝 Creating test event for ticketing system...');
     
     testEvent = await prisma.event.create({
@@ -636,7 +556,7 @@ async function main() {
       },
     });
 
-    await prisma.ticketTier.create({
+     await prisma.ticketTier.create({
       data: {
         eventId: testEvent.id,
         name: 'Regular',
@@ -890,7 +810,7 @@ async function main() {
     console.log(`   - John has 1 ticket`);
 
     // ============================================
-    // 13. Create Networking Profiles and Connections
+    // CREATE NETWORKING PROFILES AND CONNECTIONS
     // ============================================
     console.log('\n📝 Creating networking profiles...');
 
@@ -987,11 +907,7 @@ async function main() {
     console.log('⚠️ Organizer not found, skipping test event creation');
   }
 
-  // ======================
-  // 14. Create Sample Products for Merchant
-  // ======================
-  console.log('\n📝 Creating sample products...');
-  
+  // Create sample products for merchant
   await prisma.product.createMany({
     data: [
       {
@@ -1026,13 +942,9 @@ async function main() {
       },
     ],
   });
-  console.log(`✅ Created 3 sample products`);
+  console.log(`✅ Created sample products`);
 
-  // ======================
-  // 15. Create Sample Payment Links
-  // ======================
-  console.log('\n📝 Creating sample payment links...');
-  
+  // Create sample payment links
   await prisma.paymentLink.createMany({
     data: [
       {
@@ -1063,11 +975,9 @@ async function main() {
       },
     ],
   });
-  console.log(`✅ Created 2 sample payment links`);
+  console.log(`✅ Created sample payment links`);
 
-  // ======================
-  // 16. Summary
-  // ======================
+  // Get counts for summary
   const userCount = await prisma.user.count();
   const merchantCount = await prisma.merchant.count();
   const organizerCount = await prisma.eventOrganizer.count();
@@ -1104,28 +1014,12 @@ async function main() {
   console.log('   Admin: admin@rapidtie.vaultstring.com / Admin@123');
   console.log('   Merchant: merchant@example.com / Merchant@123');
   console.log('   Organizer: organizer@example.com / Organizer@123');
-  console.log('   Employee (Grade 8): john.doe@finance.gov.mw / Employee@123');
-  console.log('   Employee (Grade 6): jane.smith@finance.gov.mw / Employee@123');
+  console.log('   Employee: john.doe@finance.gov.mw / Employee@123');
   console.log('   Approver: approver@finance.gov.mw / Approver@123');
   console.log('   Finance Officer: finance.officer@finance.gov.mw / Finance@123');
   console.log('   👥 Networking Test Users:');
   console.log('   Jane: jane@email.com / Test@123');
   console.log('   John: john@example.com / Test@123');
-
-  console.log('\n💰 DSA Rates by Location:');
-  console.log('   Lilongwe: MWK 45,000 - 60,000 (Grade-based variations up to MWK 75,000)');
-  console.log('   Blantyre: MWK 40,000 - 55,000');
-  console.log('   Mzuzu: MWK 38,000 - 50,000');
-  console.log('   Zomba: MWK 35,000 - 45,000');
-  console.log('   Mangochi: MWK 42,000 - 58,000');
-  console.log('   Karonga: MWK 50,000 - 70,000');
-  console.log('   Salima: MWK 35,000 - 45,000');
-
-  console.log('\n📋 Budget Summary:');
-  console.log(`   Finance Department: MWK 15,000,000`);
-  console.log(`   Field Operations: MWK 20,000,000`);
-  console.log(`   Administration: MWK 15,000,000`);
-  console.log(`   Total Budget: MWK 50,000,000`);
 
   if (testEvent) {
     console.log('\n🎫 Test Event Details:');

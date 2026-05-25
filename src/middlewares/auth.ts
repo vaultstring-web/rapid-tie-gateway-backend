@@ -3,7 +3,6 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../server';
 import { AppError } from '../utils/errorHandler';
-import { getRedisClient } from '../services/redisClient.service';
 
 // Define and EXPORT the type
 export type UserWithRelations = {
@@ -37,17 +36,6 @@ export interface AuthRequest extends Request {
   token?: string;
 }
 
-// Helper to exclude password from user object
-const excludePassword = (user: any): any => {
-  const { password, ...userWithoutPassword } = user;
-  return userWithoutPassword;
-};
-
-// Helper to get cache key
-const getUserCacheKey = (userId: string): string => {
-  return `user:${userId}`;
-};
-
 // EXPORT the functions
 export const authenticate = async (
   req: AuthRequest,
@@ -67,8 +55,6 @@ export const authenticate = async (
     }
 
     const decoded = jwt.verify(token, jwtSecret) as { id: string };
-    const userId = decoded.id;
-    const cacheKey = getUserCacheKey(userId);
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
@@ -95,46 +81,8 @@ export const authenticate = async (
       },
     });
 
-// Try to get user from Redis cache
-try {
-  const redisClient = getRedisClient();
-  const cachedUser = await redisClient.get(cacheKey);
-  
-  if (cachedUser) {
-    user = JSON.parse(cachedUser);
-    console.log(`✅ Cache hit for user: ${userId}`);
-  }
-} catch (redisError) {
-  console.error('Redis cache error:', redisError);
-}
-    // If not in cache, fetch from database
     if (!user) {
-      user = await prisma.user.findUnique({
-        where: { id: userId },
-        include: {
-          merchant: true,
-          organizer: true,
-          employee: true,
-          approver: true,
-          financeOfficer: true,
-          admin: true,
-        },
-      });
-
-      if (!user) {
-        return next(new AppError('User not found', 401));
-      }
-
-      // Cache the user object (without password) for 60 seconds
-      try {
-        const redisClient = getRedisClient();
-        const userToCache = excludePassword(user);
-        await redisClient.setex(cacheKey, 60, JSON.stringify(userToCache));
-        console.log(`📦 Cached user: ${userId} for 60 seconds`);
-      } catch (redisError) {
-        // Redis error - log but don't fail the request
-        console.error('Redis cache set error:', redisError);
-      }
+      return next(new AppError('User not found', 401));
     }
 
     req.user = user as UserWithRelations;
@@ -162,16 +110,4 @@ export const authorize = (...roles: string[]) => {
 
     next();
   };
-};
-
-// Helper function to invalidate user cache on logout
-export const invalidateUserCache = async (userId: string): Promise<void> => {
-  try {
-    const redisClient = getRedisClient();
-    const cacheKey = getUserCacheKey(userId);
-    await redisClient.del(cacheKey);
-    console.log(`🗑️ Cache invalidated for user: ${userId}`);
-  } catch (redisError) {
-    console.error('Redis cache invalidation error:', redisError);
-  }
 };

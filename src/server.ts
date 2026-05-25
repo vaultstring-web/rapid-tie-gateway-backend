@@ -126,6 +126,7 @@ app.use('/api/events', networkingRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/organizer', qrcodeRoutes); 
 app.use('/api/organizer', communicationRoutes);
+app.use('/api', communicationRoutes); 
 app.use('/api/admin', adminMerchantRoutes);
 app.use('/api/admin', adminUserRoutes);
 app.use('/api/admin', adminHealthRoutes);
