@@ -10,6 +10,8 @@ import { logger } from '../utils/logger';
 import { sendVerificationEmail } from '../utils/email';
 import speakeasy from 'speakeasy';
 import QRCode from 'qrcode';
+import { invalidateUserCache } from '../middlewares/auth';
+
 export class AuthController {
   /**
    * Register a new user
@@ -615,37 +617,46 @@ export class AuthController {
     }
   }
 
-  /**
-   * Logout user
-   */
-  async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const token = req.token;
-      const refreshToken = req.cookies?.refreshToken;
+ /**
+ * Logout user
+ */
+async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const token = req.token;
+    const userId = req.user?.id;
+    const refreshToken = req.cookies?.refreshToken;
 
-      // Delete sessions (if tokens exist)
-      if (token) {
-        await prisma.session.deleteMany({ where: { token } });
-      }
-      if (refreshToken) {
-        await prisma.session.deleteMany({ where: { token: refreshToken } });
-      }
-
-      // Clear both cookies
-      res.clearCookie('token');
-      res.clearCookie('refreshToken');
-
-      // Log activity
-      if (req.user) {
-        await this.logActivity(req.user.id, 'LOGOUT', req);
-      }
-
-      res.json({ success: true, message: 'Logout successful' });
-    } catch (error) {
-      next(error);
+    if (!token) {
+      return next(new AppError('No token provided', 401));
     }
-  }
 
+    // Invalidate user cache in Redis
+    if (userId) {
+      await invalidateUserCache(userId);
+    }
+
+    // Delete access token session
+    await prisma.session.deleteMany({ where: { token } });
+
+    // Delete refresh token session (if exists)
+    if (refreshToken) {
+      await prisma.session.deleteMany({ where: { token: refreshToken } });
+    }
+
+    // Clear both cookies
+    res.clearCookie('token');
+    res.clearCookie('refreshToken');
+
+    // Log activity
+    if (req.user) {
+      await this.logActivity(req.user.id, 'LOGOUT', req);
+    }
+
+    res.json({ success: true, message: 'Logout successful' });
+  } catch (error) {
+    next(error);
+  }
+}
   /**
    * Get current authenticated user
    */
