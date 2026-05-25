@@ -1,19 +1,31 @@
-import { createClient, type RedisClientType } from 'redis';
+// src/services/redisClient.service.ts
+import Redis from 'ioredis';
 
-let redisClient: RedisClientType | null = null;
+let redisClient: Redis | null = null;
 
-export async function getRedisClient(): Promise<RedisClientType> {
-  if (redisClient) return redisClient;
-
-  const url = process.env.REDIS_URL || 'redis://localhost:6379';
-  redisClient = createClient({ url });
-
-  redisClient.on('error', (err) => {
-    // Avoid crashing the process on Redis disconnects; callers should handle failures.
-    console.error('Redis client error:', err);
-  });
-
-  await redisClient.connect();
+export const getRedisClient = (): Redis => {
+  if (!redisClient) {
+    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+    redisClient = new Redis(redisUrl);
+    
+    redisClient.on('connect', () => {
+      console.log('✅ Redis client connected');
+    });
+    
+    redisClient.on('error', (err) => {
+      console.error('❌ Redis client error:', err);
+    });
+  }
+  
   return redisClient;
-}
+};
 
+export const closeRedisConnection = async (): Promise<void> => {
+  if (redisClient) {
+    await redisClient.quit();
+    redisClient = null;
+    console.log('Redis connection closed');
+  }
+};
+
+export default { getRedisClient, closeRedisConnection };
