@@ -1,6 +1,7 @@
 // controllers/admin.controller.ts
 import { Request, Response } from 'express';
 import { prisma } from '../server';
+import { Prisma } from '@prisma/client';
 import os from 'os';
 
 // Cache for admin metrics
@@ -13,18 +14,12 @@ async function getSystemHealth() {
   const freeMemory = os.freemem();
   const usedMemory = totalMemory - freeMemory;
   
-  // Get CPU usage
   const cpus = os.cpus();
   const cpuCount = cpus.length;
   const cpuModel = cpus[0]?.model || 'Unknown';
-  
-  // Get load average (1, 5, 15 minutes)
   const loadAvg = os.loadavg();
-  
-  // Get uptime
   const uptime = process.uptime();
   
-  // Get database connection status
   let dbStatus = 'connected';
   let dbLatency = 0;
   try {
@@ -35,7 +30,6 @@ async function getSystemHealth() {
     dbStatus = 'disconnected';
   }
   
-  // Get disk info (approximate - from process.cwd)
   const diskInfo = {
     platform: process.platform,
     nodeVersion: process.version,
@@ -74,7 +68,6 @@ async function getSystemHealth() {
   };
 }
 
-// Format uptime
 function formatUptime(seconds: number): string {
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
@@ -90,7 +83,6 @@ function formatUptime(seconds: number): string {
   return parts.join(' ') || '0s';
 }
 
-// Get active users by role
 async function getActiveUsersByRole() {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -129,83 +121,42 @@ async function getActiveUsersByRole() {
   };
 }
 
-// Get platform event metrics
 async function getPlatformEventMetrics() {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
   
-  // Event statistics
-  
   const totalEvents = await prisma.event.count();
-  const publishedEvents = await prisma.event.count({
-    where: { status: 'PUBLISHED' },
-  });
-  const completedEvents = await prisma.event.count({
-    where: { status: 'COMPLETED' },
-  });
-  const cancelledEvents = await prisma.event.count({
-    where: { status: 'CANCELLED' },
-  });
+  const publishedEvents = await prisma.event.count({ where: { status: 'PUBLISHED' } });
+  const completedEvents = await prisma.event.count({ where: { status: 'COMPLETED' } });
+  const cancelledEvents = await prisma.event.count({ where: { status: 'CANCELLED' } });
+  const recentEvents = await prisma.event.count({ where: { createdAt: { gte: thirtyDaysAgo } } });
   
-  // Events created in last 30 days
-  const recentEvents = await prisma.event.count({
-    where: {
-      createdAt: { gte: thirtyDaysAgo },
-    },
-  });
-  
-  // Ticket statistics
   const totalTicketsSold = await prisma.ticket.count();
-  const activeTickets = await prisma.ticket.count({
-    where: { status: 'ACTIVE' },
-  });
-  const usedTickets = await prisma.ticket.count({
-    where: { status: 'USED' },
-  });
+  const activeTickets = await prisma.ticket.count({ where: { status: 'ACTIVE' } });
+  const usedTickets = await prisma.ticket.count({ where: { status: 'USED' } });
   
-  // Revenue statistics
   const transactions = await prisma.transaction.aggregate({
     where: { status: 'success' },
-    _sum: {
-      amount: true,
-      fee: true,
-      netAmount: true,
-    },
+    _sum: { amount: true, fee: true, netAmount: true },
   });
   
   const totalRevenue = transactions._sum.amount || 0;
   const totalFees = transactions._sum.fee || 0;
   const netRevenue = transactions._sum.netAmount || 0;
   
-  // Recent revenue (last 30 days)
   const recentTransactions = await prisma.transaction.aggregate({
-    where: {
-      status: 'success',
-      createdAt: { gte: thirtyDaysAgo },
-    },
-    _sum: {
-      amount: true,
-    },
+    where: { status: 'success', createdAt: { gte: thirtyDaysAgo } },
+    _sum: { amount: true },
   });
   const recentRevenue = recentTransactions._sum.amount || 0;
   
-  // Event views
   const totalEventViews = await prisma.eventView.count();
-  const recentEventViews = await prisma.eventView.count({
-    where: {
-      viewedAt: { gte: thirtyDaysAgo },
-    },
-  });
+  const recentEventViews = await prisma.eventView.count({ where: { viewedAt: { gte: thirtyDaysAgo } } });
   
-  // Top events by ticket sales
   const topEvents = await prisma.ticket.groupBy({
     by: ['eventId'],
     _count: true,
-    orderBy: {
-      _count: {
-        eventId: 'desc',
-      },
-    },
+    orderBy: { _count: { eventId: 'desc' } },
     take: 5,
   });
   
@@ -224,7 +175,6 @@ async function getPlatformEventMetrics() {
     })
   );
   
-  // Platform growth (weekly new users for chart)
   const weeklyGrowth = await getWeeklyGrowth();
   
   return {
@@ -257,7 +207,6 @@ async function getPlatformEventMetrics() {
   };
 }
 
-// Get weekly growth data for charts
 async function getWeeklyGrowth() {
   const weeks = [];
   const now = new Date();
@@ -269,30 +218,15 @@ async function getWeeklyGrowth() {
     weekEnd.setDate(now.getDate() - (i * 7));
     
     const newUsers = await prisma.user.count({
-      where: {
-        createdAt: {
-          gte: weekStart,
-          lt: weekEnd,
-        },
-      },
+      where: { createdAt: { gte: weekStart, lt: weekEnd } },
     });
     
     const newEvents = await prisma.event.count({
-      where: {
-        createdAt: {
-          gte: weekStart,
-          lt: weekEnd,
-        },
-      },
+      where: { createdAt: { gte: weekStart, lt: weekEnd } },
     });
     
     const ticketsSold = await prisma.ticket.count({
-      where: {
-        createdAt: {
-          gte: weekStart,
-          lt: weekEnd,
-        },
-      },
+      where: { createdAt: { gte: weekStart, lt: weekEnd } },
     });
     
     weeks.unshift({
@@ -307,19 +241,13 @@ async function getWeeklyGrowth() {
   return weeks;
 }
 
-// Get recent activity feed
 async function getRecentActivity(limit: number = 20) {
   const activities = await prisma.activityLog.findMany({
     orderBy: { createdAt: 'desc' },
     take: limit,
     include: {
       user: {
-        select: {
-          firstName: true,
-          lastName: true,
-          email: true,
-          role: true,
-        },
+        select: { firstName: true, lastName: true, email: true, role: true },
       },
     },
   });
@@ -337,7 +265,6 @@ async function getRecentActivity(limit: number = 20) {
   }));
 }
 
-// Get time ago string
 function getTimeAgo(date: Date): string {
   const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
   
@@ -359,16 +286,11 @@ function getTimeAgo(date: Date): string {
   return 'just now';
 }
 
-// Admin Dashboard - Main endpoint
 export const getAdminDashboard = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Check if user is admin
     const user = (req as any).user;
     if (!user || user.role !== 'ADMIN') {
-      res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin privileges required.',
-      });
+      res.status(403).json({ success: false, message: 'Access denied. Admin privileges required.' });
       return;
     }
     
@@ -376,15 +298,10 @@ export const getAdminDashboard = async (req: Request, res: Response): Promise<vo
     const cached = metricsCache.get(cacheKey);
     
     if (cached && cached.expiresAt > Date.now()) {
-      res.status(200).json({
-        success: true,
-        data: cached.data,
-        cached: true,
-      });
+      res.status(200).json({ success: true, data: cached.data, cached: true });
       return;
     }
     
-    // Gather all metrics in parallel
     const [systemHealth, activeUsers, platformMetrics, recentActivity] = await Promise.all([
       getSystemHealth(),
       getActiveUsersByRole(),
@@ -400,74 +317,351 @@ export const getAdminDashboard = async (req: Request, res: Response): Promise<vo
       activity: recentActivity,
     };
     
-    // Cache the response
-    metricsCache.set(cacheKey, {
-      data: dashboardData,
-      expiresAt: Date.now() + CACHE_DURATION,
-    });
+    metricsCache.set(cacheKey, { data: dashboardData, expiresAt: Date.now() + CACHE_DURATION });
     
-    res.status(200).json({
-      success: true,
-      data: dashboardData,
-      cached: false,
-    });
+    res.status(200).json({ success: true, data: dashboardData, cached: false });
   } catch (error) {
     console.error('Admin dashboard error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch admin dashboard',
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch admin dashboard' });
   }
 };
 
-// Clear admin cache
 export const clearAdminCache = async (req: Request, res: Response): Promise<void> => {
   try {
     const user = (req as any).user;
     if (!user || user.role !== 'ADMIN') {
-      res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin privileges required.',
-      });
+      res.status(403).json({ success: false, message: 'Access denied. Admin privileges required.' });
       return;
     }
     
     metricsCache.clear();
-    res.status(200).json({
-      success: true,
-      message: 'Admin dashboard cache cleared',
-    });
+    res.status(200).json({ success: true, message: 'Admin dashboard cache cleared' });
   } catch (error) {
     console.error('Clear admin cache error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to clear cache',
-    });
+    res.status(500).json({ success: false, message: 'Failed to clear cache' });
   }
 };
 
-// Get system health only (lightweight)
 export const getSystemHealthOnly = async (req: Request, res: Response): Promise<void> => {
   try {
     const user = (req as any).user;
     if (!user || user.role !== 'ADMIN') {
-      res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin privileges required.',
-      });
+      res.status(403).json({ success: false, message: 'Access denied. Admin privileges required.' });
       return;
     }
     
     const systemHealth = await getSystemHealth();
-    res.status(200).json({
-      success: true,
-      data: systemHealth,
-    });
+    res.status(200).json({ success: true, data: systemHealth });
   } catch (error) {
     console.error('System health error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch system health',
+    res.status(500).json({ success: false, message: 'Failed to fetch system health' });
+  }
+};
+
+// ======================
+// 👥 Employee Management
+// ======================
+
+export const createEmployee = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = (req as any).user;
+    if (!user || user.role !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Access denied. Admin privileges required.' });
+      return;
+    }
+
+    const { userId, departmentId, organizationId, employeeId, jobTitle, grade, bankAccount, mobileMoney } = req.body;
+
+    if (!userId || !departmentId || !organizationId || !employeeId || !jobTitle) {
+      res.status(400).json({
+        success: false,
+        message: 'Missing required fields: userId, departmentId, organizationId, employeeId, jobTitle',
+      });
+      return;
+    }
+
+    const targetUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, email: true },
     });
+
+    if (!targetUser) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    if (targetUser.role !== 'EMPLOYEE') {
+      res.status(400).json({
+        success: false,
+        message: `User role must be EMPLOYEE. Current role: ${targetUser.role}`,
+      });
+      return;
+    }
+
+    const department = await prisma.department.findUnique({ where: { id: departmentId } });
+    if (!department) {
+      res.status(404).json({ success: false, message: 'Department not found' });
+      return;
+    }
+
+    const organization = await prisma.organization.findUnique({ where: { id: organizationId } });
+    if (!organization) {
+      res.status(404).json({ success: false, message: 'Organization not found' });
+      return;
+    }
+
+    const existingEmployee = await prisma.employee.findUnique({ where: { userId: userId } });
+    if (existingEmployee) {
+      res.status(409).json({ success: false, message: 'Employee profile already exists for this user' });
+      return;
+    }
+
+    const existingEmployeeId = await prisma.employee.findUnique({ where: { employeeId: employeeId } });
+    if (existingEmployeeId) {
+      res.status(409).json({ success: false, message: 'Employee ID already exists' });
+      return;
+    }
+
+    const newEmployee = await prisma.employee.create({
+      data: {
+        userId,
+        departmentId,
+        organizationId,
+        employeeId,
+        jobTitle,
+        grade: grade || null,
+        bankAccount: bankAccount ? bankAccount : Prisma.JsonNull,
+        mobileMoney: mobileMoney ? mobileMoney : Prisma.JsonNull,
+      },
+      include: {
+        user: { select: { id: true, email: true, firstName: true, lastName: true, role: true } },
+        department: true,
+        organization: true,
+      },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId: user.id,
+        action: 'EMPLOYEE_CREATED',
+        entity: 'Employee',
+        entityId: newEmployee.id,
+        newValue: { employeeId: newEmployee.employeeId, userId: targetUser.id },
+        ipAddress: req.ip,
+      },
+    });
+
+    res.status(201).json({ success: true, message: 'Employee profile created successfully', data: newEmployee });
+  } catch (error) {
+    console.error('Create employee error:', error);
+    res.status(500).json({ success: false, message: 'Failed to create employee profile' });
+  }
+};
+
+export const updateEmployee = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = (req as any).user;
+    if (!user || user.role !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Access denied. Admin privileges required.' });
+      return;
+    }
+
+    const { id } = req.params;
+    const { departmentId, organizationId, jobTitle, grade, bankAccount, mobileMoney } = req.body;
+
+    const existingEmployee = await prisma.employee.findUnique({ where: { id: id } });
+    if (!existingEmployee) {
+      res.status(404).json({ success: false, message: 'Employee not found' });
+      return;
+    }
+
+    if (departmentId) {
+      const department = await prisma.department.findUnique({ where: { id: departmentId } });
+      if (!department) {
+        res.status(404).json({ success: false, message: 'Department not found' });
+        return;
+      }
+    }
+
+    if (organizationId) {
+      const organization = await prisma.organization.findUnique({ where: { id: organizationId } });
+      if (!organization) {
+        res.status(404).json({ success: false, message: 'Organization not found' });
+        return;
+      }
+    }
+
+    const updatedEmployee = await prisma.employee.update({
+      where: { id: id },
+      data: {
+        departmentId: departmentId !== undefined ? departmentId : undefined,
+        organizationId: organizationId !== undefined ? organizationId : undefined,
+        jobTitle: jobTitle !== undefined ? jobTitle : undefined,
+        grade: grade !== undefined ? grade : undefined,
+        bankAccount: bankAccount !== undefined ? (bankAccount ? bankAccount : Prisma.JsonNull) : undefined,
+        mobileMoney: mobileMoney !== undefined ? (mobileMoney ? mobileMoney : Prisma.JsonNull) : undefined,
+      },
+      include: {
+        user: { select: { id: true, email: true, firstName: true, lastName: true, role: true } },
+        department: true,
+        organization: true,
+      },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId: user.id,
+        action: 'EMPLOYEE_UPDATED',
+        entity: 'Employee',
+        entityId: updatedEmployee.id,
+        newValue: { employeeId: updatedEmployee.employeeId, updatedFields: Object.keys(req.body) },
+        ipAddress: req.ip,
+      },
+    });
+
+    res.status(200).json({ success: true, message: 'Employee profile updated successfully', data: updatedEmployee });
+  } catch (error) {
+    console.error('Update employee error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update employee profile' });
+  }
+};
+
+export const getAllEmployees = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = (req as any).user;
+    if (!user || user.role !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Access denied. Admin privileges required.' });
+      return;
+    }
+
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const skip = (page - 1) * limit;
+    const search = req.query.search as string;
+
+    const whereCondition: any = {};
+
+    if (search) {
+      whereCondition.OR = [
+        { employeeId: { contains: search, mode: 'insensitive' } },
+        { jobTitle: { contains: search, mode: 'insensitive' } },
+        { user: { email: { contains: search, mode: 'insensitive' } } },
+        { user: { firstName: { contains: search, mode: 'insensitive' } } },
+        { user: { lastName: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [employees, totalCount] = await Promise.all([
+      prisma.employee.findMany({
+        where: whereCondition,
+        include: {
+          user: { select: { id: true, email: true, firstName: true, lastName: true, phone: true, role: true, createdAt: true } },
+          department: true,
+          organization: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.employee.count({ where: whereCondition }),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        employees,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(totalCount / limit),
+          totalItems: totalCount,
+          itemsPerPage: limit,
+          hasNextPage: page < Math.ceil(totalCount / limit),
+          hasPrevPage: page > 1,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Get employees error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch employees' });
+  }
+};
+
+export const getEmployeeById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = (req as any).user;
+    if (!user || user.role !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Access denied. Admin privileges required.' });
+      return;
+    }
+
+    const { id } = req.params;
+
+    const employee = await prisma.employee.findUnique({
+      where: { id: id },
+      include: {
+        user: { select: { id: true, email: true, firstName: true, lastName: true, phone: true, role: true, createdAt: true } },
+        department: true,
+        organization: true,
+        dsaRequests: { orderBy: { submittedAt: 'desc' }, take: 10 },
+      },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found' });
+      return;
+    }
+
+    res.status(200).json({ success: true, data: employee });
+  } catch (error) {
+    console.error('Get employee by ID error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch employee' });
+  }
+};
+
+export const deleteEmployee = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = (req as any).user;
+    if (!user || user.role !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Access denied. Admin privileges required.' });
+      return;
+    }
+
+    const { id } = req.params;
+
+    const existingEmployee = await prisma.employee.findUnique({
+      where: { id: id },
+      include: { dsaRequests: { where: { status: { in: ['PENDING', 'APPROVED'] } } } },
+    });
+
+    if (!existingEmployee) {
+      res.status(404).json({ success: false, message: 'Employee not found' });
+      return;
+    }
+
+    if (existingEmployee.dsaRequests.length > 0) {
+      res.status(400).json({
+        success: false,
+        message: 'Cannot delete employee with pending or approved DSA requests',
+      });
+      return;
+    }
+
+    await prisma.employee.delete({ where: { id: id } });
+
+    await prisma.activityLog.create({
+      data: {
+        userId: user.id,
+        action: 'EMPLOYEE_DELETED',
+        entity: 'Employee',
+        entityId: existingEmployee.id,
+        newValue: { employeeId: existingEmployee.employeeId },
+        ipAddress: req.ip,
+      },
+    });
+
+    res.status(200).json({ success: true, message: 'Employee profile deleted successfully' });
+  } catch (error) {
+    console.error('Delete employee error:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete employee profile' });
   }
 };
