@@ -33,10 +33,13 @@ export async function beginIdempotency(params: {
     createdAt: new Date().toISOString(),
   };
 
-  const setResult = await redis.set(key, JSON.stringify(processing), {
-    NX: true,
-    EX: ttlSeconds,
-  });
+  const setResult = await redis.set(
+    key,
+    JSON.stringify(processing),
+    'EX',
+    ttlSeconds,
+    'NX'
+  );
 
   if (setResult === 'OK') {
     return { type: 'acquired', key, requestHash };
@@ -84,6 +87,6 @@ export async function completeIdempotency(params: {
     response: { httpStatus, body },
   };
 
-  await redis.set(key, JSON.stringify(completed), { EX: ttlSeconds });
+  await redis.set(key, JSON.stringify(completed), 'EX', ttlSeconds);
 }
 

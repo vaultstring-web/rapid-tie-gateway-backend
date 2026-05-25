@@ -672,44 +672,25 @@ async processBatch(req: AuthRequest, res: Response, next: NextFunction): Promise
       return next(new AppError('Batch is already completed', 400));
     }
 
-    const updateData: any = { status };
-    
+    const updateData: Record<string, unknown> = { status };
+
     if (status === 'completed') {
       updateData.processedAt = new Date();
-      
+
+      const fiscalYear = `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
+
       await prisma.$transaction(async (tx) => {
-        // Mark all items as success
         await tx.disbursementItem.updateMany({
           where: { batchId: id, status: 'pending' },
           data: { status: 'success', processedAt: new Date() },
         });
 
-      if (batch.status === 'completed') {
-        return next(new AppError('Batch is already completed', 400));
-      }
-
-      const updateData: any = { status };
-      if (status === 'completed') {
-        updateData.processedAt = new Date();
-        await prisma.$transaction(async (tx) => {
-          await tx.disbursementItem.updateMany({
-            where: { batchId: id, status: 'pending' },
-            data: { status: 'success', processedAt: new Date() },
-          });
-
-          const items = await tx.disbursementItem.findMany({
-            where: { batchId: id },
-            select: { requestId: true },
-          });
-          const reqIds = items.map((i) => i.requestId);
-        // Get all request IDs from this batch
-        const items = await tx.disbursementItem.findMany({
+        const batchItems = await tx.disbursementItem.findMany({
           where: { batchId: id },
           select: { requestId: true, amount: true },
         });
 
-        // Update budgets: move from committed to spent for each request's department
-        for (const item of items) {
+        for (const item of batchItems) {
           const request = await tx.dsaRequest.findUnique({
             where: { id: item.requestId },
             include: {
@@ -722,17 +703,16 @@ async processBatch(req: AuthRequest, res: Response, next: NextFunction): Promise
             },
           });
 
-          if (request && request.employee.departmentId) {
+          if (request?.employee.departmentId) {
             const budget = await tx.budget.findFirst({
               where: {
                 organizationId: officer.organizationId,
                 departmentId: request.employee.departmentId,
-                fiscalYear: new Date().getFullYear().toString(),
+                fiscalYear,
               },
             });
 
             if (budget) {
-              // Move amount from committed to spent
               await tx.budget.update({
                 where: { id: budget.id },
                 data: {
@@ -744,15 +724,15 @@ async processBatch(req: AuthRequest, res: Response, next: NextFunction): Promise
           }
         }
 
-        // Update DSA requests status to PAID and send notifications
-        const reqIds = items.map((i) => i.requestId);
-        await tx.dsaRequest.updateMany({
-          where: { id: { in: reqIds } },
-          data: { status: 'PAID' },
-        });
+        const reqIds = batchItems.map((i) => i.requestId);
+        if (reqIds.length > 0) {
+          await tx.dsaRequest.updateMany({
+            where: { id: { in: reqIds } },
+            data: { status: 'PAID' },
+          });
+        }
 
-        // Create notifications for each paid request and send real-time WebSocket notifications
-        const items = await prisma.disbursementItem.findMany({
+        const itemsWithRequests = await tx.disbursementItem.findMany({
           where: { batchId: id },
           include: {
             request: {
@@ -767,57 +747,25 @@ async processBatch(req: AuthRequest, res: Response, next: NextFunction): Promise
           },
         });
 
-        for (const item of items) {
-          if (item.request && item.request.employee.user.id) {
-            const notification = await prisma.notification.create({
-              data: {
-                userId: item.request.employee.user.id,
-                type: 'DSA_PAID',
-                title: 'DSA Payment Processed',
-                message: `Your DSA request ${item.request.requestNumber} for ${item.request.destination} has been paid. Amount: MWK ${item.request.totalAmount.toLocaleString()}`,
-                data: { requestId: item.request.id, requestNumber: item.request.requestNumber, batchId: id },
-              },
-            });
-            
-            // Send real-time WebSocket notification
-            if (notification) {
-              emitNotification(item.request.employee.user.id, notification);
-            }
-          }
-        }
-      } else {
-        await prisma.disbursementBatch.update({ where: { id }, data: updateData });
-      }
+        for (const item of itemsWithRequests) {
+          const userId = item.request?.employee?.user?.id;
+          if (!userId || !item.request) continue;
 
-        // Create notifications for each paid request
-        for (const item of items) {
-          const request = await tx.dsaRequest.findUnique({
-            where: { id: item.requestId },
-            include: {
-              employee: {
-                include: {
-                  user: { select: { id: true } },
-                },
+          const notification = await tx.notification.create({
+            data: {
+              userId,
+              type: 'DSA_PAID',
+              title: 'DSA Payment Processed',
+              message: `Your DSA request ${item.request.requestNumber} for ${item.request.destination} has been paid. Amount: MWK ${item.request.totalAmount.toLocaleString()}`,
+              data: {
+                requestId: item.request.id,
+                requestNumber: item.request.requestNumber,
+                batchId: id,
               },
             },
           });
-          
-          if (request && request.employee.user.id) {
-            const notification = await tx.notification.create({
-              data: {
-                userId: request.employee.user.id,
-                type: 'DSA_PAID',
-                title: 'DSA Payment Processed',
-                message: `Your DSA request ${request.requestNumber} for ${request.destination} has been paid. Amount: MWK ${request.totalAmount.toLocaleString()}`,
-                data: { requestId: request.id, requestNumber: request.requestNumber, batchId: id },
-              },
-            });
-            
-            // Send real-time WebSocket notification
-            if (notification) {
-              emitNotification(request.employee.user.id, notification);
-            }
-          }
+
+          emitNotification(userId, notification);
         }
 
         await tx.disbursementBatch.update({
