@@ -70,43 +70,21 @@ export const authenticate = async (
     const userId = decoded.id;
     const cacheKey = getUserCacheKey(userId);
 
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.id },
-      select: {
-        id: true,
-        email: true,
-        // password deliberately excluded
-        firstName: true,
-        lastName: true,
-        role: true,
-        phone: true,
-        emailVerified: true,
-        twoFactorEnabled: true,
-        lastLoginAt: true,
-        passwordChangedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        merchant: true,
-        organizer: true,
-        employee: true,
-        approver: true,
-        financeOfficer: true,
-        admin: true,
-      },
-    });
+    let user: any = null;
 
-// Try to get user from Redis cache
-try {
-  const redisClient = getRedisClient();
-  const cachedUser = await redisClient.get(cacheKey);
-  
-  if (cachedUser) {
-    user = JSON.parse(cachedUser);
-    console.log(`✅ Cache hit for user: ${userId}`);
-  }
-} catch (redisError) {
-  console.error('Redis cache error:', redisError);
-}
+    // Try to get user from Redis cache
+    try {
+      const redisClient = getRedisClient();
+      const cachedUser = await redisClient.get(cacheKey);
+      
+      if (cachedUser) {
+        user = JSON.parse(cachedUser);
+        console.log(`✅ Cache hit for user: ${userId}`);
+      }
+    } catch (redisError) {
+      console.error('Redis cache error:', redisError);
+    }
+
     // If not in cache, fetch from database
     if (!user) {
       user = await prisma.user.findUnique({

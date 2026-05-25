@@ -623,12 +623,12 @@ async getPending(req: AuthRequest, res: Response, next: NextFunction): Promise<v
     }
   }
 
-// ======================
-// ✅ / ❌ Approve / Reject
-// ======================
-processAction(
-  action: 'approve' | 'reject'
-): (req: AuthRequest, res: Response, next: NextFunction) => Promise<void> {
+  // ======================
+  // ✅ / ❌ Approve / Reject
+  // ======================
+  processAction(
+    action: 'approve' | 'reject'
+  ): (req: AuthRequest, res: Response, next: NextFunction) => Promise<void> {
   return async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const approverProfile = req.user?.approver;
@@ -687,28 +687,8 @@ processAction(
           return next(new AppError('No budget found for this department', 422));
         }
 
-        // Notify the employee and send real-time WebSocket notification
-        const request = await prisma.dsaRequest.findUnique({
-          where: { id },
-          include: { employee: { include: { user: { select: { id: true } } } } },
-        });
-        if (request) {
-          const notification = await prisma.notification.create({
-            data: {
-              userId: request.employee.user.id,
-              type: action === 'approve' ? 'DSA_APPROVED' : 'DSA_REJECTED',
-              title: action === 'approve' ? 'DSA Request Approved' : 'DSA Request Rejected',
-              message: `Your request ${dsaRequest.requestNumber} for ${dsaRequest.destination} has been ${approvalStatus}.${comments ? ` Comment: ${comments}` : ''}`,
-              data: { requestId: id, requestNumber: dsaRequest.requestNumber },
-            },
-          }).catch(() => null);
-          
-          // Send real-time WebSocket notification
-          if (notification) {
-            emitNotification(request.employee.user.id, notification);
-          }
         const availableBudget = budget.allocated - budget.spent - budget.committed;
-        
+
         if (availableBudget < dsaRequest.totalAmount) {
           return next(new AppError(
             `Insufficient budget. Available: MWK ${availableBudget.toLocaleString()}, Required: MWK ${dsaRequest.totalAmount.toLocaleString()}`,
@@ -716,7 +696,6 @@ processAction(
           ));
         }
 
-        // Increment committed amount in budget
         await prisma.budget.update({
           where: { id: budget.id },
           data: {
@@ -728,7 +707,6 @@ processAction(
       const approvalStatus = action === 'approve' ? 'approved' : 'rejected';
       const newRequestStatus = action === 'approve' ? 'APPROVED' : 'REJECTED';
 
-      // Create approval record
       await prisma.approval.create({
         data: {
           requestId: id,
@@ -745,25 +723,23 @@ processAction(
         data: { status: newRequestStatus, updatedAt: new Date() },
       });
 
-            // Notify the employee via database and real-time WebSocket
-      const request = await prisma.dsaRequest.findUnique({
+      const dsaRequestWithUser = await prisma.dsaRequest.findUnique({
         where: { id },
         include: { employee: { include: { user: { select: { id: true } } } } },
       });
-      if (request) {
+      if (dsaRequestWithUser) {
         const notification = await prisma.notification.create({
           data: {
-            userId: request.employee.user.id,
+            userId: dsaRequestWithUser.employee.user.id,
             type: action === 'approve' ? 'DSA_APPROVED' : 'DSA_REJECTED',
             title: action === 'approve' ? 'DSA Request Approved' : 'DSA Request Rejected',
             message: `Your request ${dsaRequest.requestNumber} for ${dsaRequest.destination} has been ${approvalStatus}.${comments ? ` Comment: ${comments}` : ''}`,
             data: { requestId: id, requestNumber: dsaRequest.requestNumber },
           },
         }).catch(() => null);
-        
-        // Send real-time WebSocket notification
+
         if (notification) {
-          emitNotification(request.employee.user.id, notification);
+          emitNotification(dsaRequestWithUser.employee.user.id, notification);
         }
       }
 
@@ -776,7 +752,8 @@ processAction(
       next(error);
     }
   };
-}
+  }
+
   // ======================
   // 👤 Approver Profile
   // ======================
