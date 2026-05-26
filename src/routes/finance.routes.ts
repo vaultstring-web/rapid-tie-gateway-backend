@@ -10,6 +10,7 @@ import {
   budgetsQuerySchema,
   createBatchSchema,
   bulkDisbursementUploadSchema,
+  confirmBatchUploadSchema,
   processBatchSchema,
   updateProfileSchema,
 } from '../validators/finance.validators';
@@ -78,6 +79,15 @@ router.post(
   '/disbursements/batches/:id/process',
   validate(processBatchSchema),
   (req, res, next) => financeController.processBatch(req as any, res, next)
+);
+
+// POST /api/finance/disbursements/batches/:id/confirm-upload
+// Manual confirmation upload (Option B): CSV/XLSX with transaction refs.
+router.post(
+  '/disbursements/batches/:id/confirm-upload',
+  upload.single('file'),
+  validate(confirmBatchUploadSchema),
+  (req, res, next) => financeController.confirmBatchFromUpload(req as any, res, next)
 );
 
 // ─── Profile ─────────────────────────────────────────────────────────────────

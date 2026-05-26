@@ -373,6 +373,35 @@ Event Creation → Ticket Tiers → Ticket Validation → Payment Processing →
 
 ---
 
+## 💸 DSA Disbursement (Option B: Manual Confirmation Upload)
+
+Because live mobile-money payout APIs are not integrated yet, disbursement batches use a **manual confirmation** step before a request is marked `PAID`.
+
+### Batch Status State Machine
+
+```mermaid
+stateDiagram-v2
+  [*] --> pending
+  pending --> processing
+  processing --> pending_confirmation
+  pending_confirmation --> completed
+  pending --> failed
+  processing --> failed
+  pending_confirmation --> failed
+  failed --> processing
+```
+
+### Confirming payouts (CSV/XLSX)
+
+- **Step 1**: Finance marks the batch `processing` or `pending_confirmation` via `POST /api/finance/disbursements/batches/:id/process`
+- **Step 2**: Finance uploads a confirmation file to `POST /api/finance/disbursements/batches/:id/confirm-upload`
+
+Confirmation file columns (minimum):
+- `requestId`
+- `providerRef` (or `transactionRef` / `reference`)
+
+The server will only mark items `success` (and DSA requests `PAID`) for rows that include a transaction reference. When all items are confirmed, the batch becomes `completed`.
+
 ## 📡 API Endpoints Summary
 
 ### Event Management

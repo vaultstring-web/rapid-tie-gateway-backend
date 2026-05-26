@@ -38,13 +38,22 @@ export const bulkDisbursementUploadSchema = z.object({
 
 export const processBatchSchema = z.object({
   body: z.object({
-    status: z.enum(['processing', 'completed', 'failed'], {
-      errorMap: () => ({ message: 'status must be one of: processing, completed, failed' }),
+    status: z.enum(['processing', 'pending_confirmation', 'failed'], {
+      errorMap: () => ({
+        message: 'status must be one of: processing, pending_confirmation, failed',
+      }),
     }),
   }),
   params: z.object({
     id: z.string().min(1, 'Batch id is required'),
   }),
+});
+
+export const confirmBatchUploadSchema = z.object({
+  params: z.object({
+    id: z.string().min(1, 'Batch id is required'),
+  }),
+  body: z.object({}).passthrough(),
 });
 
 export const updateProfileSchema = z.object({

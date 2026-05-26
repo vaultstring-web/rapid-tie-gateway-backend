@@ -69,7 +69,16 @@ describe('FinanceController', () => {
     ]);
     prismaMock.dsaRequest.count.mockResolvedValue(1);
     prismaMock.dsaRequest.aggregate.mockResolvedValue({ _sum: { totalAmount: 120000 } });
-    prismaMock.event.findMany.mockResolvedValue([{ id: 'evt-2', name: 'North Summit' }]);
+    prismaMock.event.findMany.mockResolvedValue([
+      {
+        id: 'evt-2',
+        name: 'North Summit',
+        city: 'Mzuzu',
+        startDate: new Date('2026-02-02'),
+        endDate: new Date('2026-02-03'),
+        category: 'Conference',
+      },
+    ]);
 
     const res = makeRes();
     await controller.getDisbursements(makeReq(), res, jest.fn() as NextFunction);

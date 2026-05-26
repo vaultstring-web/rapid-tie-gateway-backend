@@ -73,7 +73,13 @@ describe('EmployeeController', () => {
     ]);
     prismaMock.dsaRequest.count.mockResolvedValue(1);
     prismaMock.event.findMany.mockResolvedValue([
-      { id: 'evt-1', name: 'City Expo', city: 'Lilongwe' },
+      {
+        id: 'evt-1',
+        name: 'City Expo',
+        city: 'Lilongwe',
+        startDate: new Date('2026-01-11'),
+        endDate: new Date('2026-01-11'),
+      },
     ]);
 
     const res = makeRes();

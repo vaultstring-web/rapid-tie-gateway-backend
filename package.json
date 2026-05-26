@@ -5,7 +5,9 @@
   "main": "dist/server.js",
   "scripts": {
     "test-server": "ts-node src/test-server.ts",
-    "test": "jest",
+    "test": "jest --coverage=false",
+    "test:unit": "jest --coverage=false",
+    "test:integration": "jest src/tests/integration --testTimeout=60000",
     "test:api": "bash test-api.sh",
     "dev": "nodemon src/server.ts",
     "build": "tsc",
