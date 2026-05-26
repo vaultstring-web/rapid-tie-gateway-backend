@@ -34,6 +34,11 @@ type UploadedDisbursementRow = {
   recipientAccount?: string;
 };
 
+type UploadedConfirmationRow = {
+  requestId: string;
+  providerRef: string;
+};
+
 async function parseCsvBuffer(buffer: Uint8Array): Promise<UploadedDisbursementRow[]> {
   return new Promise((resolve, reject) => {
     parseCsv(
@@ -90,6 +95,17 @@ async function parseUpload(file: Express.Multer.File): Promise<UploadedDisbursem
     return parseCsvBuffer(file.buffer);
   }
   throw new AppError('Only .csv and .xlsx files are supported', 400);
+}
+
+async function parseConfirmationUpload(file: Express.Multer.File): Promise<UploadedConfirmationRow[]> {
+  const rows = await parseUpload(file);
+  // Reuse the same parser (CSV/XLSX) but require providerRef.
+  return rows
+    .map((r: any) => ({
+      requestId: String(r.requestId ?? '').trim(),
+      providerRef: String(r.providerRef ?? r.transactionRef ?? r.reference ?? '').trim(),
+    }))
+    .filter((r) => Boolean(r.requestId) && Boolean(r.providerRef));
 }
 
 // REPLACE the entire eventInsightsForRequests function with:
@@ -630,80 +646,130 @@ async getDisbursements(req: AuthRequest, res: Response, next: NextFunction): Pro
   }
 
   // ======================
-// 🔄 Process / Update Batch Status
-// ======================
-async processBatch(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-  try {
-    const officer = await getFinanceOfficer(req, next);
-    if (!officer) return;
+  // 🔄 Process / Update Batch Status
+  // ======================
+  async processBatch(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const officer = await getFinanceOfficer(req, next);
+      if (!officer) return;
 
-    const { id } = req.params;
-    const { status } = req.body as { status?: string };
+      const { id } = req.params;
+      const { status } = req.body as { status?: string };
 
-    const validStatuses = ['processing', 'completed', 'failed'];
-    if (!status || !validStatuses.includes(status)) {
-      return next(new AppError(`status must be one of: ${validStatuses.join(', ')}`, 400));
-    }
+      const validStatuses = ['processing', 'pending_confirmation', 'failed'];
+      if (!status || !validStatuses.includes(status)) {
+        return next(new AppError(`status must be one of: ${validStatuses.join(', ')}`, 400));
+      }
 
-    const batch = await prisma.disbursementBatch.findFirst({
-      where: { id, organizationId: officer.organizationId },
-      include: {
-        items: {
-          include: {
-            request: {
-              include: {
-                employee: {
-                  include: {
-                    department: true,
-                    user: { select: { id: true } },
+      const batch = await prisma.disbursementBatch.findFirst({
+        where: { id, organizationId: officer.organizationId },
+        include: {
+          items: {
+            include: {
+              request: {
+                include: {
+                  employee: {
+                    include: {
+                      department: true,
+                      user: { select: { id: true } },
+                    },
                   },
                 },
               },
             },
           },
         },
-      },
-    });
+      });
 
-    if (!batch) return next(new AppError('Batch not found', 404));
+      if (!batch) return next(new AppError('Batch not found', 404));
 
-    // Prevent illegal transitions
-    if (batch.status === 'completed') {
-      return next(new AppError('Batch is already completed', 400));
+      if (batch.status === 'completed') {
+        return next(new AppError('Batch is already completed', 400));
+      }
+
+      // Option B: do NOT auto-complete to PAID. Completion requires manual confirmation upload.
+      await prisma.disbursementBatch.update({
+        where: { id },
+        data: { status },
+      });
+
+      const updated = await prisma.disbursementBatch.findUnique({ where: { id } });
+
+      res.json({ success: true, data: { batch: updated } });
+    } catch (err) {
+      next(err);
     }
+  }
 
-    const updateData: Record<string, unknown> = { status };
+  // ======================
+  // 📎 Confirm Batch From Upload (Option B)
+  // ======================
+  async confirmBatchFromUpload(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const officer = await getFinanceOfficer(req, next);
+      if (!officer) return;
 
-    if (status === 'completed') {
-      updateData.processedAt = new Date();
+      const { id } = req.params;
+      const file = (req as AuthRequest & { file?: Express.Multer.File }).file;
+      if (!file) {
+        return next(new AppError('Confirmation file is required (.csv or .xlsx)', 400));
+      }
+
+      const rows = await parseConfirmationUpload(file);
+      if (rows.length === 0) {
+        return next(new AppError('No valid confirmation rows found (require requestId + providerRef)', 400));
+      }
+
+      const batch = await prisma.disbursementBatch.findFirst({
+        where: { id, organizationId: officer.organizationId },
+        include: { items: true },
+      });
+      if (!batch) return next(new AppError('Batch not found', 404));
+      if (batch.status === 'completed') return next(new AppError('Batch is already completed', 400));
+
+      const batchItemByRequest = new Map(batch.items.map((i) => [i.requestId, i]));
+
+      const invalid: Array<{ requestId: string; reason: string }> = [];
+      const confirmable = rows.filter((r) => {
+        const item = batchItemByRequest.get(r.requestId);
+        if (!item) {
+          invalid.push({ requestId: r.requestId, reason: 'Request not in this batch' });
+          return false;
+        }
+        if (item.status === 'success') {
+          invalid.push({ requestId: r.requestId, reason: 'Already confirmed' });
+          return false;
+        }
+        return true;
+      });
 
       const fiscalYear = `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
 
-      await prisma.$transaction(async (tx) => {
-        await tx.disbursementItem.updateMany({
-          where: { batchId: id, status: 'pending' },
-          data: { status: 'success', processedAt: new Date() },
-        });
-
-        const batchItems = await tx.disbursementItem.findMany({
-          where: { batchId: id },
-          select: { requestId: true, amount: true },
-        });
-
-        for (const item of batchItems) {
-          const request = await tx.dsaRequest.findUnique({
-            where: { id: item.requestId },
+      const result = await prisma.$transaction(async (tx) => {
+        for (const row of confirmable) {
+          const item = await tx.disbursementItem.update({
+            where: { requestId: row.requestId },
+            data: {
+              status: 'success',
+              providerRef: row.providerRef,
+              processedAt: new Date(),
+              errorMessage: null,
+            },
             include: {
-              employee: {
+              request: {
                 include: {
-                  department: true,
-                  user: { select: { id: true } },
+                  employee: { include: { user: { select: { id: true } } } },
                 },
               },
             },
           });
 
-          if (request?.employee.departmentId) {
+          // Budget move committed -> spent
+          const request = await tx.dsaRequest.findUnique({
+            where: { id: row.requestId },
+            include: { employee: true },
+          });
+          if (request?.employee?.departmentId) {
             const budget = await tx.budget.findFirst({
               where: {
                 organizationId: officer.organizationId,
@@ -711,7 +777,6 @@ async processBatch(req: AuthRequest, res: Response, next: NextFunction): Promise
                 fiscalYear,
               },
             });
-
             if (budget) {
               await tx.budget.update({
                 where: { id: budget.id },
@@ -722,68 +787,55 @@ async processBatch(req: AuthRequest, res: Response, next: NextFunction): Promise
               });
             }
           }
-        }
 
-        const reqIds = batchItems.map((i) => i.requestId);
-        if (reqIds.length > 0) {
-          await tx.dsaRequest.updateMany({
-            where: { id: { in: reqIds } },
+          await tx.dsaRequest.update({
+            where: { id: row.requestId },
             data: { status: 'PAID' },
           });
+
+          const userId = item.request?.employee?.user?.id;
+          if (userId && item.request) {
+            const notification = await tx.notification.create({
+              data: {
+                userId,
+                type: 'DSA_PAID',
+                title: 'DSA Payment Processed',
+                message: `Your DSA request ${item.request.requestNumber} for ${item.request.destination} has been paid. Amount: MWK ${item.request.totalAmount.toLocaleString()}`,
+                data: { requestId: item.request.id, requestNumber: item.request.requestNumber, batchId: id },
+              },
+            });
+            emitNotification(userId, notification);
+          }
         }
 
-        const itemsWithRequests = await tx.disbursementItem.findMany({
-          where: { batchId: id },
-          include: {
-            request: {
-              include: {
-                employee: {
-                  include: {
-                    user: { select: { id: true } },
-                  },
-                },
-              },
-            },
+        const refreshedItems = await tx.disbursementItem.findMany({ where: { batchId: id } });
+        const allConfirmed = refreshedItems.length > 0 && refreshedItems.every((i) => i.status === 'success');
+
+        const updatedBatch = await tx.disbursementBatch.update({
+          where: { id },
+          data: {
+            status: allConfirmed ? 'completed' : 'pending_confirmation',
+            processedAt: allConfirmed ? new Date() : null,
           },
         });
 
-        for (const item of itemsWithRequests) {
-          const userId = item.request?.employee?.user?.id;
-          if (!userId || !item.request) continue;
-
-          const notification = await tx.notification.create({
-            data: {
-              userId,
-              type: 'DSA_PAID',
-              title: 'DSA Payment Processed',
-              message: `Your DSA request ${item.request.requestNumber} for ${item.request.destination} has been paid. Amount: MWK ${item.request.totalAmount.toLocaleString()}`,
-              data: {
-                requestId: item.request.id,
-                requestNumber: item.request.requestNumber,
-                batchId: id,
-              },
-            },
-          });
-
-          emitNotification(userId, notification);
-        }
-
-        await tx.disbursementBatch.update({
-          where: { id },
-          data: updateData,
-        });
+        return { updatedBatch, allConfirmed };
       });
-    } else {
-      await prisma.disbursementBatch.update({ where: { id }, data: updateData });
+
+      res.json({
+        success: true,
+        data: {
+          batch: result.updatedBatch,
+          allConfirmed: result.allConfirmed,
+          confirmedCount: confirmable.length,
+          invalid,
+        },
+      });
+    } catch (err) {
+      next(err);
     }
-
-    const updated = await prisma.disbursementBatch.findUnique({ where: { id } });
-
-    res.json({ success: true, data: { batch: updated } });
-  } catch (err) {
-    next(err);
   }
-}
+
   // ======================
   // ⬆️ Bulk Disbursement Upload
   // ======================
