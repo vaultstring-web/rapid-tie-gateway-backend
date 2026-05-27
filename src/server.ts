@@ -21,7 +21,7 @@ dotenv.config();
 // Import routes
 import authRoutes from './routes/auth.routes';
 import merchantRoutes from './routes/merchant.routes';
-import organizerRoutes from './routes/organizer.routes';
+import organizerRoutes from './routes/approver.routes';
 import employeeRoutes from './routes/employee.routes';
 import approverRoutes from './routes/approver.routes';
 import financeRoutes from './routes/finance.routes';
@@ -55,6 +55,9 @@ import {
   removeMonitorConnection,
 } from './controllers/admin/transactionMonitor.controller';
 
+// Import Redis client for health check
+import { getRedisClient } from './services/redisClient.service';
+
 // Initialize Express
 const app: Application = express();
 const httpServer = createServer(app);
@@ -85,14 +88,83 @@ app.use('/api', limiter);
 // Static files
 app.use('/uploads', express.static('uploads'));
 
-// Health check
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({
-    status: 'OK',
+// ======================
+// ENHANCED HEALTH CHECK ENDPOINT
+// ======================
+app.get('/health', async (_req: Request, res: Response) => {
+  const healthCheck: any = {
+    status: 'healthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    uptimeFormatted: formatUptime(process.uptime()),
     environment: process.env.NODE_ENV,
     project: 'Rapid Tie Payment Gateway',
+    version: process.env.npm_package_version || '1.0.0',
+    components: {
+      database: { status: 'unknown', latency: 0 },
+      redis: { status: 'unknown', latency: 0 },
+    },
+  };
+
+  let overallStatus = 'healthy';
+  let httpStatus = 200;
+
+  // Check Database connectivity
+  const dbStart = Date.now();
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    healthCheck.components.database.status = 'healthy';
+    healthCheck.components.database.latency = Date.now() - dbStart;
+  } catch (error) {
+    healthCheck.components.database.status = 'unhealthy';
+    healthCheck.components.database.error = error instanceof Error ? error.message : 'Database connection failed';
+    overallStatus = 'unhealthy';
+    httpStatus = 503;
+    logger.error('Database health check failed:', error);
+  }
+
+  // Check Redis connectivity
+  try {
+    const redisStart = Date.now();
+    const redisClient = getRedisClient();
+    await redisClient.ping();
+    healthCheck.components.redis.status = 'healthy';
+    healthCheck.components.redis.latency = Date.now() - redisStart;
+  } catch (error) {
+    healthCheck.components.redis.status = 'unhealthy';
+    healthCheck.components.redis.error = error instanceof Error ? error.message : 'Redis connection failed';
+    logger.warn('Redis health check failed:');
+  }
+
+  healthCheck.status = overallStatus;
+
+  res.status(httpStatus).json(healthCheck);
+});
+
+// Helper function to format uptime
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (secs > 0) parts.push(`${secs}s`);
+  
+  return parts.join(' ') || '0s';
+}
+
+// ======================
+// READINESS PROBE ENDPOINT
+// ======================
+app.get('/ready', (_req: Request, res: Response) => {
+  res.status(200).json({
+    status: 'ready',
+    timestamp: new Date().toISOString(),
+    message: 'Application is ready to accept traffic',
   });
 });
 
@@ -324,6 +396,8 @@ httpServer.listen(PORT, () => {
   ║     Environment: ${process.env.NODE_ENV}                 ║
   ║     Frontend: ${process.env.FRONTEND_URL}   ║
   ║     WebSocket: ws://localhost:${PORT}        ║
+  ║     Health: http://localhost:${PORT}/health  ║
+  ║     Readiness: http://localhost:${PORT}/ready ║
   ╚════════════════════════════════════════════╝
   `);
 });
