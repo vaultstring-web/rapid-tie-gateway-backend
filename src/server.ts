@@ -402,15 +402,18 @@ httpServer.listen(PORT, () => {
   `);
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully');
+// Graceful shutdown with both SIGTERM and SIGINT support
+const gracefulShutdown = (signal: string) => {
+  logger.info(`${signal} received, shutting down gracefully`);
   httpServer.close(() => {
     logger.info('HTTP server closed');
     prisma.$disconnect();
     io.close();
     process.exit(0);
   });
-});
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 export { io, prisma, emitSalesUpdate, emitNotification };
