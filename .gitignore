@@ -3,3 +3,15 @@ node_modules
 .env
 
 /src/generated/prisma
+
+/dist
+
+/logs
+
+/uploads
+
+/node_modules
+
+/prisma/migrations
+
+

@@ -38,7 +38,7 @@ export interface AuthRequest extends Request {
 }
 
 // Helper to exclude password from user object
-const excludePassword = (user: any): any => {
+export const excludePassword = (user: any): any => {
   const { password, ...userWithoutPassword } = user;
   return userWithoutPassword;
 };

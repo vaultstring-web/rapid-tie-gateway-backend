@@ -2,11 +2,13 @@ import { PaymentProvider } from './paymentProvider';
 import { airtelProvider } from './providers/airtel.provider';
 import { mpambaProvider } from './providers/mpamba.provider';
 import { cardProvider } from './providers/card.provider';
+import { mockPaymentProvider } from './mockPaymentProvider';
 
 const providers: Record<string, PaymentProvider> = {
   airtel: airtelProvider,
   mpamba: mpambaProvider,
   card: cardProvider,
+  mock: mockPaymentProvider,
 };
 
 function normalize(input: string): string {
@@ -14,7 +16,7 @@ function normalize(input: string): string {
 }
 
 export function resolveProvider(params: { paymentMethod?: string; provider?: string }): PaymentProvider {
-  const explicit = normalize(params.provider || '');
+  const explicit = normalize(params.provider || process.env.PAYMENT_PROVIDER || '');
   if (explicit && providers[explicit]) return providers[explicit];
 
   const method = normalize(params.paymentMethod || '');

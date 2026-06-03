@@ -76,7 +76,14 @@ export const getAttendees = async (req: Request, res: Response): Promise<void> =
       where: whereCondition
     });
 
-    // Format attendee data
+    // Format attendee data with roles
+    const emails = Array.from(new Set(attendees.map(a => a.attendeeEmail)));
+    const users = await prisma.user.findMany({
+      where: { email: { in: emails } },
+      select: { email: true, role: true }
+    });
+    const emailToRole = new Map(users.map(u => [u.email, u.role]));
+
     const formattedAttendees = attendees.map(attendee => ({
       id: attendee.id,
       ticketId: attendee.id.slice(-8),
@@ -84,6 +91,7 @@ export const getAttendees = async (req: Request, res: Response): Promise<void> =
       attendeeName: attendee.attendeeName,
       attendeeEmail: attendee.attendeeEmail,
       attendeePhone: attendee.attendeePhone,
+      role: emailToRole.get(attendee.attendeeEmail) || 'PUBLIC',
       ticketType: attendee.tier.name,
       ticketPrice: attendee.tier.price,
       status: attendee.status,

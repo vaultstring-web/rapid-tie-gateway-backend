@@ -772,6 +772,56 @@ export class EmployeeController {
   }
 
   // ======================
+  // 💰 Payments
+  // ======================
+  async getPayments(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const employee = await getEmployee(req, next);
+      if (!employee) return;
+
+      const { page = '1', limit = '20' } = req.query as Record<string, string>;
+      const pageNum = Math.max(1, parseInt(page, 10));
+      const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+      const skip = (pageNum - 1) * take;
+
+      const [items, total] = await Promise.all([
+        prisma.disbursementItem.findMany({
+          where: { request: { employeeId: employee.id } },
+          include: {
+            request: { select: { id: true, requestNumber: true, destination: true, totalAmount: true, currency: true } },
+            batch: { select: { id: true, batchNumber: true, processedAt: true } },
+          },
+          orderBy: { processedAt: 'desc' },
+          skip,
+          take,
+        }),
+        prisma.disbursementItem.count({
+          where: { request: { employeeId: employee.id } }
+        })
+      ]);
+
+      res.json({
+        success: true,
+        data: {
+          payments: items.map(item => ({
+            id: item.id,
+            status: item.status,
+            amount: item.amount,
+            paymentMethod: item.paymentMethod,
+            processedAt: item.processedAt,
+            request: item.request,
+            batch: item.batch,
+            reference: item.request?.requestNumber || item.id,
+          })),
+          total
+        }
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  // ======================
   // 👤 Employee Profile
   // ======================
   async getProfile(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
@@ -860,6 +910,35 @@ export class EmployeeController {
       const employee = await getEmployee(req, next);
       if (!employee) return;
 
+      const { destination, grade } = req.query;
+
+      if (destination && grade) {
+        const rate = await prisma.dsaRate.findFirst({
+          where: {
+            organizationId: employee.organizationId,
+            location: {
+              equals: destination as string,
+              mode: 'insensitive',
+            },
+            grade: grade as string,
+            effectiveFrom: { lte: new Date() },
+            OR: [
+              { effectiveTo: null },
+              { effectiveTo: { gte: new Date() } },
+            ],
+          },
+        });
+
+        res.json({
+          success: true,
+          data: {
+            perDiem: rate ? rate.perDiemRate : 0,
+            accommodation: rate ? (rate.accommodationRate || 0) : 0,
+          },
+        });
+        return;
+      }
+
       const rates = await prisma.dsaRate.findMany({
         where: {
           organizationId: employee.organizationId,
@@ -873,6 +952,33 @@ export class EmployeeController {
       });
 
       res.json({ success: true, data: { rates } });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async getMatchingEvents(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const employee = await getEmployee(req, next);
+      if (!employee) return;
+
+      const { destination, startDate, endDate } = req.query;
+
+      if (!destination || !startDate || !endDate) {
+        res.json({ success: true, data: [] });
+        return;
+      }
+
+      const start = new Date(startDate as string);
+      const end = new Date(endDate as string);
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        res.json({ success: true, data: [] });
+        return;
+      }
+
+      const events = await findEventsForTravel(destination as string, start, end);
+      res.json({ success: true, data: events });
     } catch (err) {
       next(err);
     }

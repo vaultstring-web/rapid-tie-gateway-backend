@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../server';
 import { AppError } from '../utils/errorHandler';
-import { AuthRequest } from '../middlewares/auth';
+import { AuthRequest, excludePassword } from '../middlewares/auth';
 import { logger } from '../utils/logger';
 import { sendVerificationEmail } from '../utils/email';
 import speakeasy from 'speakeasy';
@@ -313,7 +313,7 @@ export class AuthController {
         success: true,
         message: 'Login successful',
         data: {
-          user,
+          user: excludePassword(user),
         },
       });
 
