@@ -62,6 +62,15 @@ router.get('/dsa/rates', (req, res, next) =>
   employeeController.getDsaRates(req as any, res, next)
 );
 
+router.get('/dsa/events', (req, res, next) =>
+  employeeController.getMatchingEvents(req as any, res, next)
+);
+
+// ─── Payments ──────────────────────────────────────────────────────────────────
+router.get('/payments', (req, res, next) =>
+  employeeController.getPayments(req as any, res, next)
+);
+
 // ─── Profile ─────────────────────────────────────────────────────────────────
 router.get('/profile', (req, res, next) =>
   employeeController.getProfile(req as any, res, next)

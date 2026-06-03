@@ -1,4 +1,4 @@
-import express, { Application, Request, Response } from 'express';
+import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -89,6 +89,26 @@ app.use(express.json({
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 app.use('/api', limiter);
+
+// Request logger middleware for terminal debugging
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  const oldJson = res.json;
+  
+  res.json = function (body) {
+    const duration = Date.now() - start;
+    console.log(`[API Log] ${req.method} ${req.originalUrl} - Status: ${res.statusCode} - Time: ${duration}ms`);
+    if (req.body && Object.keys(req.body).length > 0) {
+      const sanitized = { ...req.body };
+      if (sanitized.password) sanitized.password = '***';
+      if (sanitized.token) sanitized.token = '***';
+      console.log(`  Body:`, JSON.stringify(sanitized));
+    }
+    return oldJson.call(this, body);
+  };
+  
+  next();
+});
 
 // Static files
 app.use('/uploads', express.static('uploads'));

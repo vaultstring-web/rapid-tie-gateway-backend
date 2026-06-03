@@ -2,7 +2,7 @@
 import express, { Router } from 'express';
 import { OrganizerController } from '../controllers/organizer.controller';
 import { authenticate, authorize } from '../middlewares/auth';
-import { createTicketTier } from "../controllers/ticketTier.controller";
+import { createTicketTier, updateTicketTier, deleteTicketTier } from "../controllers/ticketTier.controller";
 
 const router: Router = express.Router();
 const oc = new OrganizerController();
@@ -37,5 +37,17 @@ router.put('/profile', (req, res, next) => oc.updateProfile(req, res, next));
 router.post(
   "/events/:id/tiers",
   createTicketTier
+);
+
+// UPDATE ticket tier
+router.put(
+  "/events/:id/tiers/:tierId",
+  updateTicketTier
+);
+
+// DELETE ticket tier
+router.delete(
+  "/events/:id/tiers/:tierId",
+  deleteTicketTier
 );
 export default router;

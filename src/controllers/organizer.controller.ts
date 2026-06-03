@@ -128,6 +128,7 @@ export class OrganizerController {
           skip,
           take,
           include: {
+            ticketTiers: true,
             _count: { select: { tickets: true, eventViews: true } },
             ticketSales: { select: { totalAmount: true } },
           },

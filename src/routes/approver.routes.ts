@@ -16,6 +16,18 @@ router.get('/dashboard', (req, res, next) =>
   approverController.getDashboard(req as any, res, next)
 );
 
+router.get('/team', (req, res, next) =>
+  approverController.getTeamSummary(req as any, res, next)
+);
+
+router.get('/decisions/recent', (req, res, next) =>
+  approverController.getRecentDecisions(req as any, res, next)
+);
+
+router.get('/stats', (req, res, next) =>
+  approverController.getApprovalStats(req as any, res, next)
+);
+
 // ─── All requests (any status) ───────────────────────────────────────────────
 router.get(
   '/requests',
