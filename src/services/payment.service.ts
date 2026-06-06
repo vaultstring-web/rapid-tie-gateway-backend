@@ -2,6 +2,8 @@
 import { prisma } from '../server';
 import { v4 as uuidv4 } from 'uuid';
 import { resolveProvider } from '../integrations/payments/providerRegistry';
+import { finalizeSale } from './tickets.service';
+import { releaseLock } from './inventoryLock.service';
 
 export interface PaymentInitiateData {
   sessionToken: string;
@@ -114,7 +116,7 @@ class PaymentService {
           });
         }
 
-        await this.removeInventoryLock(sessionToken);
+        await releaseLock(sessionToken);
           await this.handleWebhook({
         transactionRef,
         status: 'success',
@@ -205,50 +207,28 @@ class PaymentService {
   }
 
   private async releaseInventory(paymentSession: any) {
-  // Release the locked inventory - decrement sold count
-  if (paymentSession.orderId) {
-    // Get the order to know which tier and quantity
-    const order = await prisma.ticketSale.findUnique({
-      where: { id: paymentSession.orderId },
-      include: { tickets: true }
-    });
-    
-     if (order && order.tickets.length > 0) {
-      // Decrement the sold count
-      await prisma.ticketTier.update({
-        where: { id: paymentSession.tierId },
-        data: { sold: { decrement: order.tickets.length } }
-      });
-      
-      // Delete or mark tickets as cancelled
-      await prisma.ticket.updateMany({
-        where: { orderId: order.id },
+    // Update order status to CANCELLED
+    if (paymentSession.orderId) {
+      await prisma.ticketSale.update({
+        where: { id: paymentSession.orderId },
         data: { status: 'CANCELLED' }
       });
-      
-      // Update order status
-      await prisma.ticketSale.update({
-        where: { id: order.id },
-        data: { status: 'failed' }
-      });
     }
-  }
+    
+    // Release the lock
+    await releaseLock(paymentSession.sessionToken);
   
-  await prisma.paymentSession.update({
-    where: { id: paymentSession.id },
-    data: {
-      status: 'FAILED',
-      updatedAt: new Date(),
-      metadata: { released: true, releasedAt: new Date().toISOString() }
-    }
-  });
-  
-  console.log(`Inventory released for session: ${paymentSession.sessionToken}`);
+    await prisma.paymentSession.update({
+      where: { id: paymentSession.id },
+      data: {
+        status: 'FAILED',
+        updatedAt: new Date(),
+        metadata: { released: true, releasedAt: new Date().toISOString() }
+      }
+    });
+    
+    console.log(`Inventory released for session: ${paymentSession.sessionToken}`);
 }
-
-  private async removeInventoryLock(sessionToken: string) {
-    console.log(`Removed lock for session: ${sessionToken}`);
-  }
 
   async handleWebhook(webhookData: WebhookData) {
     // Fixed: Removed unused 'amount' variable
@@ -275,18 +255,24 @@ class PaymentService {
         }
       });
 
-      if (transaction.orderId) {
-        await prisma.ticketSale.update({
-          where: { id: transaction.orderId },
-          data: { status: 'completed' }
+      // Get payment session using sessionToken from metadata if available
+      let paymentSession = null;
+      const sessionToken = (metadata as any)?.sessionToken;
+      
+      if (sessionToken) {
+        paymentSession = await prisma.paymentSession.findUnique({
+          where: { sessionToken }
+        });
+      } else if (transaction.orderId) {
+        paymentSession = await prisma.paymentSession.findFirst({
+          where: { orderId: transaction.orderId }
         });
       }
 
-      const paymentSession = await prisma.paymentSession.findFirst({
-        where: {
-          orderId: transaction.orderId || undefined
-        }
-      });
+      if (paymentSession && paymentSession.status !== 'COMPLETED') {
+        // Finalize the sale (create tickets, increment sold count)
+        await finalizeSale(paymentSession.sessionToken);
+      }
 
       if (paymentSession && paymentSession.status === 'PROCESSING') {
         await prisma.paymentSession.update({
@@ -306,11 +292,18 @@ class PaymentService {
         }
       });
 
-      const paymentSession = await prisma.paymentSession.findFirst({
-        where: {
-          orderId: transaction.orderId || undefined
-        }
-      });
+      let paymentSession = null;
+      const sessionToken = (metadata as any)?.sessionToken;
+      
+      if (sessionToken) {
+        paymentSession = await prisma.paymentSession.findUnique({
+          where: { sessionToken }
+        });
+      } else if (transaction.orderId) {
+        paymentSession = await prisma.paymentSession.findFirst({
+          where: { orderId: transaction.orderId }
+        });
+      }
 
       if (paymentSession) {
         await this.releaseInventory(paymentSession);

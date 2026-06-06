@@ -2,30 +2,13 @@ import { Request, Response } from "express";
 import { prisma } from '../server';
 import { v4 as uuidv4 } from "uuid";
 import { paymentService } from "../services/payment.service";
-
-// Helper to lock inventory (in-memory for demo)
-const inventoryLocks: Record<string, { tierId: string; expiresAt: number }> = {};
-
-// Lock a ticket tier for a session
-function lockInventory(sessionToken: string, tierId: string, durationMs: number) {
-  inventoryLocks[sessionToken] = { tierId, expiresAt: Date.now() + durationMs };
-  return inventoryLocks[sessionToken];
-}
-
-// Periodically remove expired locks (every 1 minute)
-setInterval(() => {
-  const now = Date.now();
-  for (const token in inventoryLocks) {
-    if (inventoryLocks[token].expiresAt < now) {
-      delete inventoryLocks[token];
-    }
-  }
-}, 60_000);
+import { acquireLock, getActiveLocksForTier, releaseLock } from "../services/inventoryLock.service";
 
 export const purchaseTickets = async (
   req: Request,
   res: Response
 ): Promise<void> => {
+  const sessionToken = uuidv4();
   try {
     const { id: eventId } = req.params;
     const { tierId, quantity, customerName, customerEmail, customerPhone } = req.body;
@@ -57,8 +40,7 @@ export const purchaseTickets = async (
     }
 
     // Check availability including active inventory locks
-    const activeLocks = Object.values(inventoryLocks)
-      .filter(lock => lock.tierId === tierId && lock.expiresAt > Date.now()).length;
+    const activeLocks = await getActiveLocksForTier(tierId);
 
     if (tier.sold + quantity + activeLocks > tier.quantity) {
       res.status(400).json({ success: false, message: "Not enough tickets available" });
@@ -66,15 +48,24 @@ export const purchaseTickets = async (
     }
 
     // Lock tickets for 15 minutes
-    const sessionToken = uuidv4();
-    lockInventory(sessionToken, tierId, 15 * 60 * 1000);
+    const lockAcquired = await acquireLock({
+      tierId,
+      quantity,
+      sessionToken,
+      ttlSeconds: 15 * 60
+    });
+
+    if (!lockAcquired) {
+      res.status(409).json({ success: false, message: "Inventory lock already held, please try again" });
+      return;
+    }
 
     const feePercentage = 0.03;
     const totalAmount = tier.price * quantity;
     const feeAmount = totalAmount * feePercentage;
     const netAmount = totalAmount - feeAmount;
 
-    // Create TicketSale (existing functionality - KEPT)
+    // Create TicketSale with status RESERVED
     const sale = await prisma.ticketSale.create({
       data: {
         organizerId: event.organizerId,
@@ -86,64 +77,28 @@ export const purchaseTickets = async (
         totalAmount,
         feeAmount,
         netAmount,
-        status: "completed",
+        status: "RESERVED",
         paymentMethod: "pending",
       },
     });
 
-    // Create individual tickets with unique IDs and QR codes (existing functionality - KEPT)
-    const tickets = await Promise.all(
-      Array.from({ length: quantity }).map(async () => {
-        const ticketID = uuidv4();
-        const qr = uuidv4();
-        return await prisma.ticket.create({
-          data: {
-            id: ticketID,
-            eventId: event.id,
-            tierId: tier.id,
-            orderId: sale.id,
-            attendeeName: customerName,
-            attendeeEmail: customerEmail,
-            attendeePhone: customerPhone,
-            qrCode: qr,
-            qrCodeData: JSON.stringify({ ticketId: ticketID, eventId: event.id, tierId: tier.id }),
-          },
-        });
-      })
+    // Create payment session - DO NOT SKIP THIS!
+    await paymentService.createPaymentSession(
+      eventId,
+      tierId,
+      quantity,
+      totalAmount,
+      sessionToken,
+      sale.id // Pass the order ID to link payment session to order
     );
 
-    // Update tier sold count (existing functionality - KEPT)
-    await prisma.ticketTier.update({
-      where: { id: tier.id },
-      data: { sold: { increment: quantity } },
-    });
-
-    // NEW: Create payment session (doesn't affect existing flow)
-    // This runs in parallel but doesn't block the response if it fails
-    try {
-      await paymentService.createPaymentSession(
-        eventId,
-        tierId,
-        quantity,
-        totalAmount,
-        sessionToken,
-        sale.id // Pass the order ID to link payment session to order
-      );
-    } catch (paymentSessionError) {
-      // Log error but don't break the existing flow
-      console.error("Failed to create payment session:", paymentSessionError);
-      // The ticket sale is already completed, so we just log the error
-    }
-
-    // Return EXACT same response as before (plus optional payment session info)
+    // Return response (no tickets yet, they get created after payment)
     res.status(201).json({
       success: true,
       data: {
         order: sale,
-        tickets,
         sessionToken,
         purchaserRole,
-        // NEW: Optional payment session info (doesn't break existing clients)
         paymentSession: {
           token: sessionToken,
           amount: totalAmount,
@@ -154,6 +109,8 @@ export const purchaseTickets = async (
     });
 
   } catch (error) {
+    // Release lock on error
+    await releaseLock(sessionToken);
     console.error(error);
     res.status(500).json({ success: false, message: "Server error" });
   }
