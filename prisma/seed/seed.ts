@@ -1,4 +1,3 @@
-// prisma/seed/seed.ts
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
@@ -890,7 +889,75 @@ async function main() {
     console.log(`   - John has 1 ticket`);
 
     // ============================================
-    // 13. Create Networking Profiles and Connections
+    // 13. Create Payment Sessions for Testing Authentication
+    // ============================================
+    console.log('\n📝 Creating payment sessions with userId for testing authentication...');
+
+    if (jane && john && vipTier) {
+      // Create payment session for Jane (pending)
+      await prisma.paymentSession.create({
+        data: {
+          sessionToken: 'jane-test-session-123',
+          userId: jane.id,
+          eventId: testEvent.id,
+          tierId: vipTier.id,
+          quantity: 2,
+          totalAmount: 40000,
+          currency: 'MWK',
+          status: 'PENDING',
+          paymentMethod: 'airtel_money',
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          metadata: JSON.stringify({ test: true, user: 'jane' })
+        }
+      });
+      console.log('✅ Created payment session for Jane: jane-test-session-123');
+
+      // Create payment session for Jane (completed)
+      await prisma.paymentSession.create({
+        data: {
+          sessionToken: 'jane-completed-session-789',
+          userId: jane.id,
+          eventId: testEvent.id,
+          tierId: vipTier.id,
+          quantity: 1,
+          totalAmount: 20000,
+          currency: 'MWK',
+          status: 'COMPLETED',
+          paymentMethod: 'card',
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          metadata: JSON.stringify({ test: true, user: 'jane', completed: true })
+        }
+      });
+      console.log('✅ Created completed payment session for Jane: jane-completed-session-789');
+
+      // Create payment session for John
+      await prisma.paymentSession.create({
+        data: {
+          sessionToken: 'john-test-session-456',
+          userId: john.id,
+          eventId: testEvent.id,
+          tierId: vipTier.id,
+          quantity: 1,
+          totalAmount: 20000,
+          currency: 'MWK',
+          status: 'COMPLETED',
+          paymentMethod: 'airtel_money',
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          metadata: JSON.stringify({ test: true, user: 'john' })
+        }
+      });
+      console.log('✅ Created payment session for John: john-test-session-456');
+
+      console.log('\n📋 Payment Sessions for Authentication Testing:');
+      console.log(`   Jane's pending session: jane-test-session-123 (User: ${jane.email})`);
+      console.log(`   Jane's completed session: jane-completed-session-789 (User: ${jane.email})`);
+      console.log(`   John's session: john-test-session-456 (User: ${john.email})`);
+    } else {
+      console.log('⚠️ Could not create payment sessions - missing users or ticket tiers');
+    }
+
+    // ============================================
+    // 14. Create Networking Profiles and Connections
     // ============================================
     console.log('\n📝 Creating networking profiles...');
 
@@ -988,7 +1055,7 @@ async function main() {
   }
 
   // ======================
-  // 14. Create Sample Products for Merchant
+  // 15. Create Sample Products for Merchant
   // ======================
   console.log('\n📝 Creating sample products...');
   
@@ -1029,7 +1096,7 @@ async function main() {
   console.log(`✅ Created 3 sample products`);
 
   // ======================
-  // 15. Create Sample Payment Links
+  // 16. Create Sample Payment Links
   // ======================
   console.log('\n📝 Creating sample payment links...');
   
@@ -1066,7 +1133,7 @@ async function main() {
   console.log(`✅ Created 2 sample payment links`);
 
   // ======================
-  // 16. Summary
+  // 17. Summary
   // ======================
   const userCount = await prisma.user.count();
   const merchantCount = await prisma.merchant.count();
@@ -1082,6 +1149,7 @@ async function main() {
   const profileCount = await prisma.networkingProfile.count();
   const connectionCount = await prisma.connection.count();
   const messageCount = await prisma.message.count();
+  const paymentSessionCount = await prisma.paymentSession.count();
 
   console.log('\n🎉 Database seeding completed successfully!');
   console.log('\n📊 Seeded Data Summary:');
@@ -1093,6 +1161,7 @@ async function main() {
   console.log(`   - ${tierCount} ticket tiers`);
   console.log(`   - ${ticketCount} tickets created`);
   console.log(`   - ${orderCount} orders created`);
+  console.log(`   - ${paymentSessionCount} payment sessions created`);
   console.log(`   - ${productCount} products`);
   console.log(`   - ${linkCount} payment links`);
   console.log(`   - ${rateCount} DSA rates`);
@@ -1131,12 +1200,22 @@ async function main() {
     console.log('\n🎫 Test Event Details:');
     console.log(`   Event ID: ${testEvent.id}`);
     console.log(`   Event Name: Updated Tech Event`);
-    console.log(`\n📝 Test Endpoints:`);
+    
+    console.log('\n💳 Payment Sessions for Authentication Testing:');
+    console.log(`   Jane's pending session: jane-test-session-123`);
+    console.log(`   Jane's completed session: jane-completed-session-789`);
+    console.log(`   John's session: john-test-session-456`);
+    
+    console.log('\n📝 Test Endpoints:');
+    console.log(`   POST /api/auth/login (jane@email.com / Test@123)`);
+    console.log(`   GET /api/payments/status/jane-test-session-123 (requires auth)`);
+    console.log(`   GET /api/payments/status/john-test-session-456 (should return 403 for Jane)`);
     console.log(`   GET /api/events/${testEvent.id}/tiers`);
     console.log(`   GET /api/organizer/events/${testEvent.id}/sales`);
     console.log(`   GET /api/organizer/events/${testEvent.id}/attendees`);
     console.log(`   POST /api/events/checkin`);
-    console.log(`\n🔗 Networking Endpoints:`);
+    
+    console.log('\n🔗 Networking Endpoints:');
     console.log(`   GET /api/events/networking?eventId=${testEvent.id}`);
     console.log(`   POST /api/events/networking/profile`);
     console.log(`   GET /api/events/networking/connections`);
