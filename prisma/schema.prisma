@@ -51,9 +51,10 @@ model User {
   receivedMessages   Message[]    @relation("UserToMessages")
   networkingProfile  NetworkingProfile?
   notificationPreferences NotificationPreferences?
-   communicationRecipients CommunicationRecipient[]
+  communicationRecipients CommunicationRecipient[]
   communicationOptOuts   CommunicationOptOut[]
   auditLogs AuditLog[]
+  paymentSessions PaymentSession[]
 }
 
 model Session {
@@ -189,6 +190,7 @@ enum PaymentStatus {
 model PaymentSession {
   id            String        @id @default(cuid())
   sessionToken  String        @unique
+  userId        String?         
   eventId       String
   tierId        String
   quantity      Int
@@ -206,6 +208,7 @@ model PaymentSession {
   event Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
   tier  TicketTier   @relation(fields: [tierId], references: [id], onDelete: Cascade)
   order TicketSale?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  user  User?        @relation(fields: [userId], references: [id])
 }
 
 // Event Model
@@ -470,6 +473,7 @@ model DsaRequest {
   organization     Organization      @relation(fields: [organizationId], references: [id])
   approvals        Approval[]
   disbursementItem DisbursementItem?
+  documents Json?
 }
 
 model Approval {
