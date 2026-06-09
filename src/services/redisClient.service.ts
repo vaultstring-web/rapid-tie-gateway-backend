@@ -4,12 +4,41 @@ import Redis from 'ioredis';
 let redisClient: Redis | null = null;
 let isRedisAvailable: boolean = true;
 
+// In-memory store for mock redis
+const mockStore = new Map();
+
 const createMockRedis = (): any => ({
-  get: async () => null,
-  setex: async () => {},
-  del: async () => {},
+  get: async (key: string) => mockStore.get(key) || null,
+  set: async (key: string, value: string, ..._args: any[]) => {
+    // Simple implementation that ignores TTL/NX for mock
+    mockStore.set(key, value);
+    return 'OK';
+  },
+  setex: async (key: string, _ttl: number, value: string) => {
+    mockStore.set(key, value);
+  },
+  keys: async (pattern: string) => {
+    const results: string[] = [];
+    // Simple pattern matching - supports * wildcard at end
+    const searchPattern = pattern.replace(/\*/g, '.*');
+    const regex = new RegExp(`^${searchPattern}$`);
+    for (const key of mockStore.keys()) {
+      if (regex.test(key)) {
+        results.push(key);
+      }
+    }
+    return results;
+  },
+  del: async (...keys: string[]) => {
+    for (const key of keys) {
+      mockStore.delete(key);
+    }
+    return keys.length;
+  },
   on: () => {},
-  quit: async () => {},
+  quit: async () => {
+    mockStore.clear();
+  },
 });
 
 export const getRedisClient = (): any => {
