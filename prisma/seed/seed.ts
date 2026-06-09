@@ -1,3 +1,4 @@
+// prisma/seed/seed.ts
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
@@ -958,6 +959,7 @@ async function main() {
 
     // ============================================
     // 14. Create Networking Profiles and Connections
+    // 13. Create Networking Profiles and Connections
     // ============================================
     console.log('\n📝 Creating networking profiles...');
 
@@ -1056,6 +1058,7 @@ async function main() {
 
   // ======================
   // 15. Create Sample Products for Merchant
+  // 14. Create Sample Products for Merchant
   // ======================
   console.log('\n📝 Creating sample products...');
   
@@ -1097,6 +1100,7 @@ async function main() {
 
   // ======================
   // 16. Create Sample Payment Links
+  // 15. Create Sample Payment Links
   // ======================
   console.log('\n📝 Creating sample payment links...');
   
@@ -1134,6 +1138,7 @@ async function main() {
 
   // ======================
   // 17. Summary
+  // 16. Summary
   // ======================
   const userCount = await prisma.user.count();
   const merchantCount = await prisma.merchant.count();

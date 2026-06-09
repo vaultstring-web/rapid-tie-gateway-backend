@@ -9,11 +9,13 @@ import { getRedisClient } from '../services/redisClient.service';
 export type UserWithRelations = {
   id: string;
   email: string;
-  password: string;
+  // password is intentionally omitted — never expose the hash on req.user
   firstName: string;
   lastName: string;
   role: string;
   phone?: string | null;
+  emailVerified?: boolean;
+  twoFactorEnabled?: boolean;
   lastLoginAt?: Date | null;
   passwordChangedAt?: Date | null;
   createdAt?: Date;
@@ -37,6 +39,7 @@ export interface AuthRequest extends Request {
 
 // Helper to exclude password from user object
 const excludePassword = (user: any): any => {
+export const excludePassword = (user: any): any => {
   const { password, ...userWithoutPassword } = user;
   return userWithoutPassword;
 };
@@ -82,6 +85,22 @@ try {
 } catch (redisError) {
   console.error('Redis cache error:', redisError);
 }
+
+    let user: any = null;
+
+    // Try to get user from Redis cache
+    try {
+      const redisClient = getRedisClient();
+      const cachedUser = await redisClient.get(cacheKey);
+      
+      if (cachedUser) {
+        user = JSON.parse(cachedUser);
+        console.log(`✅ Cache hit for user: ${userId}`);
+      }
+    } catch (redisError) {
+      console.error('Redis cache error:', redisError);
+    }
+
     // If not in cache, fetch from database
     if (!user) {
       user = await prisma.user.findUnique({

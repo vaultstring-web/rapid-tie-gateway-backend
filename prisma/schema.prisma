@@ -296,24 +296,30 @@ model Ticket {
   order TicketSale @relation(fields: [orderId], references: [id])
 }
 
+enum TicketSaleStatus {
+  RESERVED
+  COMPLETED
+  CANCELLED
+}
+
 // Ticket Sale Model
 model TicketSale {
-  id            String   @id @default(cuid())
+  id            String           @id @default(cuid())
   organizerId   String
   eventId       String
-  orderNumber   String   @unique
+  orderNumber   String           @unique
   customerName  String
   customerEmail String
   customerPhone String?
   totalAmount   Float
   feeAmount     Float
   netAmount     Float
-  status        String   @default("completed")
+  status        TicketSaleStatus @default(COMPLETED)
   paymentMethod String
   transactionId String?
-  createdAt     DateTime @default(now())
+  createdAt     DateTime         @default(now())
 
-   organizer EventOrganizer @relation(fields: [organizerId], references: [id])
+  organizer EventOrganizer @relation(fields: [organizerId], references: [id])
   event     Event          @relation(fields: [eventId], references: [id])
   tickets   Ticket[]
   paymentSessions PaymentSession[] 
@@ -466,6 +472,7 @@ model DsaRequest {
   status            DsaStatus @default(PENDING)
   travelAuthRef     String?
   notes             String?
+  documents         Json?
   submittedAt       DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

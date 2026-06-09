@@ -1,6 +1,9 @@
 // services/payment.service.ts
 import { prisma } from '../server';
 import { v4 as uuidv4 } from 'uuid';
+import { resolveProvider } from '../integrations/payments/providerRegistry';
+import { finalizeSale } from './tickets.service';
+import { releaseLock } from './inventoryLock.service';
 
 export interface PaymentInitiateData {
   sessionToken: string;
@@ -18,28 +21,6 @@ export interface WebhookData {
 }
 
 class PaymentService {
-  private async processAirtelMoney(phone: string, amount: number, reference: string) {
-    console.log(`Processing Airtel Money: ${phone}, ${amount}, ${reference}`);
-    // Force failure for testing - use phone number "0000000000"
-  if (phone === "0000000000") {
-    console.log('Test failure triggered');
-    throw new Error('Payment failed - test mode');
-  }
-    // Simulate API call to Airtel Money
-    return { success: true, providerRef: `AIR-${Date.now()}` };
-  }
-
-  private async processMpamba(phone: string, amount: number, reference: string) {
-    console.log(`Processing Mpamba: ${phone}, ${amount}, ${reference}`);
-    return { success: true, providerRef: `MP-${Date.now()}` };
-  }
-
-  // Fixed: Prefix unused parameter with underscore
-  private async processCard(_cardDetails: any, amount: number, reference: string) {
-    console.log(`Processing Card: ${amount}, ${reference}`);
-    return { success: true, providerRef: `CARD-${Date.now()}` };
-  }
-
   async initiatePayment(data: PaymentInitiateData) {
     const { sessionToken, paymentMethod, provider, customerPhone } = data;
 
@@ -76,26 +57,17 @@ class PaymentService {
     });
 
     const transactionRef = `TXN-${Date.now()}-${uuidv4().slice(0, 8)}`;
+    const providerImpl = resolveProvider({ paymentMethod, provider });
 
     try {
-      let paymentResult;
       const amount = paymentSession.totalAmount;
-
-      switch (paymentMethod) {
-        case 'airtel_money':
-          if (!customerPhone) throw new Error('Phone number required for Airtel Money');
-          paymentResult = await this.processAirtelMoney(customerPhone, amount, transactionRef);
-          break;
-        case 'mpamba':
-          if (!customerPhone) throw new Error('Phone number required for Mpamba');
-          paymentResult = await this.processMpamba(customerPhone, amount, transactionRef);
-          break;
-        case 'card':
-          paymentResult = await this.processCard({}, amount, transactionRef);
-          break;
-        default:
-          throw new Error(`Unsupported payment method: ${paymentMethod}`);
-      }
+      const paymentResult = await providerImpl.initiate({
+        amount,
+        currency: paymentSession.currency,
+        transactionRef,
+        customerPhone,
+        metadata: { sessionToken },
+      });
 
       if (paymentResult.success) {
         const transaction = await prisma.transaction.create({
@@ -107,7 +79,7 @@ class PaymentService {
             currency: paymentSession.currency,
             status: 'success',
             paymentMethod,
-            provider: provider || paymentMethod,
+            provider: providerImpl.id,
             providerRef: paymentResult.providerRef,
             organizerId: paymentSession.event.organizerId,
             metadata: {
@@ -144,7 +116,7 @@ class PaymentService {
           });
         }
 
-        await this.removeInventoryLock(sessionToken);
+        await releaseLock(sessionToken);
           await this.handleWebhook({
         transactionRef,
         status: 'success',
@@ -175,7 +147,7 @@ class PaymentService {
           currency: paymentSession.currency,
           status: 'failed',
           paymentMethod,
-          provider: provider || paymentMethod,
+          provider: providerImpl.id,
           organizerId: paymentSession.event.organizerId,
           metadata: {
             error: errorMessage,
@@ -235,50 +207,28 @@ class PaymentService {
   }
 
   private async releaseInventory(paymentSession: any) {
-  // Release the locked inventory - decrement sold count
-  if (paymentSession.orderId) {
-    // Get the order to know which tier and quantity
-    const order = await prisma.ticketSale.findUnique({
-      where: { id: paymentSession.orderId },
-      include: { tickets: true }
-    });
-    
-     if (order && order.tickets.length > 0) {
-      // Decrement the sold count
-      await prisma.ticketTier.update({
-        where: { id: paymentSession.tierId },
-        data: { sold: { decrement: order.tickets.length } }
-      });
-      
-      // Delete or mark tickets as cancelled
-      await prisma.ticket.updateMany({
-        where: { orderId: order.id },
+    // Update order status to CANCELLED
+    if (paymentSession.orderId) {
+      await prisma.ticketSale.update({
+        where: { id: paymentSession.orderId },
         data: { status: 'CANCELLED' }
       });
-      
-      // Update order status
-      await prisma.ticketSale.update({
-        where: { id: order.id },
-        data: { status: 'failed' }
-      });
     }
-  }
+    
+    // Release the lock
+    await releaseLock(paymentSession.sessionToken);
   
-  await prisma.paymentSession.update({
-    where: { id: paymentSession.id },
-    data: {
-      status: 'FAILED',
-      updatedAt: new Date(),
-      metadata: { released: true, releasedAt: new Date().toISOString() }
-    }
-  });
-  
-  console.log(`Inventory released for session: ${paymentSession.sessionToken}`);
+    await prisma.paymentSession.update({
+      where: { id: paymentSession.id },
+      data: {
+        status: 'FAILED',
+        updatedAt: new Date(),
+        metadata: { released: true, releasedAt: new Date().toISOString() }
+      }
+    });
+    
+    console.log(`Inventory released for session: ${paymentSession.sessionToken}`);
 }
-
-  private async removeInventoryLock(sessionToken: string) {
-    console.log(`Removed lock for session: ${sessionToken}`);
-  }
 
   async handleWebhook(webhookData: WebhookData) {
     // Fixed: Removed unused 'amount' variable
@@ -305,18 +255,24 @@ class PaymentService {
         }
       });
 
-      if (transaction.orderId) {
-        await prisma.ticketSale.update({
-          where: { id: transaction.orderId },
-          data: { status: 'completed' }
+      // Get payment session using sessionToken from metadata if available
+      let paymentSession = null;
+      const sessionToken = (metadata as any)?.sessionToken;
+      
+      if (sessionToken) {
+        paymentSession = await prisma.paymentSession.findUnique({
+          where: { sessionToken }
+        });
+      } else if (transaction.orderId) {
+        paymentSession = await prisma.paymentSession.findFirst({
+          where: { orderId: transaction.orderId }
         });
       }
 
-      const paymentSession = await prisma.paymentSession.findFirst({
-        where: {
-          orderId: transaction.orderId || undefined
-        }
-      });
+      if (paymentSession && paymentSession.status !== 'COMPLETED') {
+        // Finalize the sale (create tickets, increment sold count)
+        await finalizeSale(paymentSession.sessionToken);
+      }
 
       if (paymentSession && paymentSession.status === 'PROCESSING') {
         await prisma.paymentSession.update({
@@ -336,11 +292,18 @@ class PaymentService {
         }
       });
 
-      const paymentSession = await prisma.paymentSession.findFirst({
-        where: {
-          orderId: transaction.orderId || undefined
-        }
-      });
+      let paymentSession = null;
+      const sessionToken = (metadata as any)?.sessionToken;
+      
+      if (sessionToken) {
+        paymentSession = await prisma.paymentSession.findUnique({
+          where: { sessionToken }
+        });
+      } else if (transaction.orderId) {
+        paymentSession = await prisma.paymentSession.findFirst({
+          where: { orderId: transaction.orderId }
+        });
+      }
 
       if (paymentSession) {
         await this.releaseInventory(paymentSession);

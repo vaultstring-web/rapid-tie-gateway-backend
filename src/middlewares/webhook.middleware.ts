@@ -1,29 +1,41 @@
 import { Request, Response, NextFunction } from 'express';
-import crypto from 'crypto';
+import { getProviderById } from '../integrations/payments/providerRegistry';
+
+type SupportedProvider = 'airtel' | 'mpamba';
+
+function parseSignatureHeader(signatureHeader: unknown): string | null {
+  if (!signatureHeader) return null;
+  const raw = Array.isArray(signatureHeader) ? signatureHeader[0] : String(signatureHeader);
+  // Common format: "sha256=<hex>"
+  return raw.startsWith('sha256=') ? raw.slice('sha256='.length) : raw;
+}
+
+function verifyProviderSignature(provider: SupportedProvider, rawBody: Buffer, signatureHex: string): boolean {
+  const providerImpl = getProviderById(provider);
+  if (!providerImpl?.verifyWebhookSignature) return false;
+  return providerImpl.verifyWebhookSignature(rawBody, signatureHex);
+}
 
 export const verifyWebhookSignature = (provider: string) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    const signature = req.headers['x-signature'] || req.headers['webhook-signature'];
+    const signatureHeader = req.headers['x-signature'] || req.headers['webhook-signature'];
     
-    if (!signature) {
+    const signatureHex = parseSignatureHeader(signatureHeader);
+    if (!signatureHex) {
       return res.status(401).json({ error: 'No signature provided' });
     }
 
-    // Different verification for different providers
-    let isValid = false;
-    
-    switch (provider) {
-      case 'airtel':
-        // Airtel-specific verification
-        isValid = verifyAirtelSignature(req.body, signature as string);
-        break;
-      case 'mpamba':
-        // Mpamba-specific verification
-        isValid = verifyMpambaSignature(req.body, signature as string);
-        break;
-      default:
-        isValid = false;
+    const rawBody = (req as any).rawBody as Buffer | undefined;
+    if (!rawBody || !Buffer.isBuffer(rawBody)) {
+      return res.status(400).json({ error: 'Missing raw body for signature verification' });
     }
+
+    const normalizedProvider = String(provider || '').toLowerCase();
+    if (normalizedProvider !== 'airtel' && normalizedProvider !== 'mpamba') {
+      return res.status(400).json({ error: 'Unsupported provider' });
+    }
+
+    const isValid = verifyProviderSignature(normalizedProvider as SupportedProvider, rawBody, signatureHex);
 
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid signature' });
@@ -32,31 +44,3 @@ export const verifyWebhookSignature = (provider: string) => {
     return next();
   };
 };
-
-function verifyAirtelSignature(payload: any, signature: string): boolean {
-  // Implement Airtel signature verification
-  const secret = process.env.AIRTEL_WEBHOOK_SECRET || '';
-  const expectedSignature = crypto
-    .createHmac('sha256', secret)
-    .update(JSON.stringify(payload))
-    .digest('hex');
-  
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expectedSignature)
-  );
-}
-
-function verifyMpambaSignature(payload: any, signature: string): boolean {
-  // Implement Mpamba signature verification
-  const secret = process.env.MPAMBA_WEBHOOK_SECRET || '';
-  const expectedSignature = crypto
-    .createHmac('sha256', secret)
-    .update(JSON.stringify(payload))
-    .digest('hex');
-  
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expectedSignature)
-  );
-}

@@ -121,7 +121,6 @@ export class ApproverController {
           where: { organizationId: orgId, status: 'PENDING' },
           _sum: { totalAmount: true },
         }),
-        // Recent approval actions by THIS approver
         prisma.approval.findMany({
           where: { approverId: approverProfile.id },
           orderBy: { approvedAt: 'desc' },
@@ -139,7 +138,6 @@ export class ApproverController {
             },
           },
         }),
-        // Team summary — pending requests by department
         prisma.department.findMany({
           where: { organizationId: orgId },
           include: {
@@ -631,10 +629,37 @@ async getPending(req: AuthRequest, res: Response, next: NextFunction): Promise<v
 processAction(
   action: 'approve' | 'reject'
 ): (req: AuthRequest, res: Response, next: NextFunction) => Promise<void> {
+  // ======================
+  // ✅ / ❌ Approve / Reject
+  // ======================
+  processAction(
+    action: 'approve' | 'reject'
+  ): (req: AuthRequest, res: Response, next: NextFunction) => Promise<void> {
   return async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const approverProfile = req.user?.approver;
       if (!approverProfile) return next(new AppError('Approver profile not found', 403));
+
+      const { id } = req.params;
+      const { comments } = req.body as { comments?: string };
+
+      const dsaRequest = await prisma.dsaRequest.findFirst({
+        where: { id, organizationId: approverProfile.organizationId },
+        include: {
+          employee: {
+            include: {
+              department: true,
+            },
+          },
+        },
+      });
+
+      if (!dsaRequest) return next(new AppError('Request not found', 404));
+      
+      if (dsaRequest.status !== 'PENDING') {
+        return next(new AppError(`Request is already ${dsaRequest.status.toLowerCase()}`, 400));
+      }
+
 
       const { id } = req.params;
       const { comments } = req.body as { comments?: string };
@@ -691,6 +716,7 @@ processAction(
 
         const availableBudget = budget.allocated - budget.spent - budget.committed;
         
+
         if (availableBudget < dsaRequest.totalAmount) {
           return next(new AppError(
             `Insufficient budget. Available: MWK ${availableBudget.toLocaleString()}, Required: MWK ${dsaRequest.totalAmount.toLocaleString()}`,
@@ -706,6 +732,56 @@ processAction(
           },
         });
       }
+
+      const approvalStatus = action === 'approve' ? 'approved' : 'rejected';
+      const newRequestStatus = action === 'approve' ? 'APPROVED' : 'REJECTED';
+
+      await prisma.approval.create({
+        data: {
+          requestId: id,
+          approverId: approverProfile.id,
+          level: approverProfile.approvalLevel,
+          status: approvalStatus,
+          comments: comments ?? null,
+          approvedAt: new Date(),
+        },
+      });
+
+      await prisma.dsaRequest.update({
+        where: { id },
+        data: { status: newRequestStatus, updatedAt: new Date() },
+      });
+
+      const dsaRequestWithUser = await prisma.dsaRequest.findUnique({
+        where: { id },
+        include: { employee: { include: { user: { select: { id: true } } } } },
+      });
+      if (dsaRequestWithUser) {
+        const notification = await prisma.notification.create({
+          data: {
+            userId: dsaRequestWithUser.employee.user.id,
+            type: action === 'approve' ? 'DSA_APPROVED' : 'DSA_REJECTED',
+            title: action === 'approve' ? 'DSA Request Approved' : 'DSA Request Rejected',
+            message: `Your request ${dsaRequest.requestNumber} for ${dsaRequest.destination} has been ${approvalStatus}.${comments ? ` Comment: ${comments}` : ''}`,
+            data: { requestId: id, requestNumber: dsaRequest.requestNumber },
+          },
+        }).catch(() => null);
+
+        if (notification) {
+          emitNotification(dsaRequestWithUser.employee.user.id, notification);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: `Request ${approvalStatus} successfully`,
+        data: { requestId: id, status: newRequestStatus },
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+  }
 
       const approvalStatus = action === 'approve' ? 'approved' : 'rejected';
       const newRequestStatus = action === 'approve' ? 'APPROVED' : 'REJECTED';

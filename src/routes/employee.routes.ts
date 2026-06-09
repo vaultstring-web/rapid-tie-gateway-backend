@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/auth';
 import { validate } from '../middlewares/validate';
 import employeeController from '../controllers/employee.controller';
+import { upload } from '../config/upload.config';
 import {
   createDsaRequestSchema,
   requestListQuerySchema,
@@ -15,49 +16,66 @@ const router: Router = Router();
 router.use(authenticate, authorize('EMPLOYEE'));
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
-// GET /api/employee/dashboard
 router.get('/dashboard', (req, res, next) =>
   employeeController.getDashboard(req as any, res, next)
 );
 
 // ─── DSA Requests ─────────────────────────────────────────────────────────────
-// GET  /api/employee/dsa/requests          — paginated list
 router.get(
   '/dsa/requests',
   validate(requestListQuerySchema),
   (req, res, next) => employeeController.getMyRequests(req as any, res, next)
 );
 
-// POST /api/employee/dsa/requests          — submit new request
 router.post(
   '/dsa/requests',
   validate(createDsaRequestSchema),
   (req, res, next) => employeeController.createRequest(req as any, res, next)
 );
 
-// GET  /api/employee/dsa/requests/:id      — single request detail
 router.get('/dsa/requests/:id', (req, res, next) =>
   employeeController.getRequest(req as any, res, next)
 );
 
-// DELETE /api/employee/dsa/requests/:id   — cancel request
+router.put('/dsa/requests/:id', (req, res, next) =>
+  employeeController.updateRequest(req as any, res, next)
+);
+
+// ─── DSA Document Upload ─────────────────────────────────────────────────────
+router.post(
+  '/dsa/requests/:id/documents',
+  upload.single('file'),
+  (req, res, next) => employeeController.uploadDocument(req as any, res, next)
+);
+
+router.delete(
+  '/dsa/requests/:id/documents/:documentId',
+  (req, res, next) => employeeController.deleteDocument(req as any, res, next)
+);
+
 router.delete('/dsa/requests/:id', (req, res, next) =>
   employeeController.cancelRequest(req as any, res, next)
 );
 
 // ─── DSA Rates ────────────────────────────────────────────────────────────────
-// GET /api/employee/dsa/rates             — per-diem rates for this employee's org
 router.get('/dsa/rates', (req, res, next) =>
   employeeController.getDsaRates(req as any, res, next)
 );
 
+router.get('/dsa/events', (req, res, next) =>
+  employeeController.getMatchingEvents(req as any, res, next)
+);
+
+// ─── Payments ──────────────────────────────────────────────────────────────────
+router.get('/payments', (req, res, next) =>
+  employeeController.getPayments(req as any, res, next)
+);
+
 // ─── Profile ─────────────────────────────────────────────────────────────────
-// GET /api/employee/profile
 router.get('/profile', (req, res, next) =>
   employeeController.getProfile(req as any, res, next)
 );
 
-// PUT /api/employee/profile
 router.put(
   '/profile',
   validate(updateProfileSchema),
