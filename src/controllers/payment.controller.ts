@@ -1,16 +1,28 @@
 // controllers/payment.controller.ts
 import { Request, Response } from 'express';
+import { AuthRequest } from '../middlewares/auth';
 import { paymentService } from '../services/payment.service';
 import { prisma } from '../server';
 import { beginIdempotency, completeIdempotency, hashRequestBody } from '../services/idempotency.service';
 
-export const initiatePayment = async (req: Request, res: Response): Promise<void> => {
+export const initiatePayment = async (req: AuthRequest, res: Response): Promise<void> => {
   const idempotencyKey = req.header('Idempotency-Key') || req.header('Idempotency-key');
   const requestHash = idempotencyKey ? hashRequestBody(req.body) : '';
   let idemKey: string | null = null;
 
   try {
     const { sessionToken, paymentMethod, provider, customerPhone } = req.body;
+    const userId = req.user?.id;
+
+    // ✅ Authentication check
+    if (!userId) {
+      const body = {
+        success: false,
+        message: 'Authentication required'
+      };
+      res.status(401).json(body);
+      return;
+    }
 
     if (!sessionToken || !paymentMethod) {
       const body = {
@@ -18,7 +30,31 @@ export const initiatePayment = async (req: Request, res: Response): Promise<void
         message: 'Missing required fields: sessionToken, paymentMethod'
       };
       res.status(400).json(body);
-      return; // Added return
+      return;
+    }
+
+    // ✅ Verify payment session exists and belongs to user
+    const paymentSession = await prisma.paymentSession.findUnique({
+      where: { sessionToken }
+    });
+
+    if (!paymentSession) {
+      const body = {
+        success: false,
+        message: 'Payment session not found'
+      };
+      res.status(404).json(body);
+      return;
+    }
+
+    // ✅ Ownership check
+    if (paymentSession.userId && paymentSession.userId !== userId) {
+      const body = {
+        success: false,
+        message: 'You can only initiate payments for your own sessions'
+      };
+      res.status(403).json(body);
+      return;
     }
 
     if (idempotencyKey) {
@@ -69,7 +105,7 @@ export const initiatePayment = async (req: Request, res: Response): Promise<void
         ttlSeconds: 60 * 30,
       });
     }
-    return; // Added return
+    return;
   } catch (error: any) {
     console.error('Payment initiation error:', error);
     const body = {
@@ -87,7 +123,7 @@ export const initiatePayment = async (req: Request, res: Response): Promise<void
         ttlSeconds: 60 * 10,
       });
     }
-    return; // Added return
+    return;
   }
 };
 
@@ -113,24 +149,34 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
     });
 
     res.status(200).json({ success: true, data: result });
-    return; // Added return
+    return;
   } catch (error: any) {
     console.error('Webhook error:', error);
     res.status(500).json({ success: false, message: error.message });
-    return; // Added return
+    return;
   }
 };
 
-export const getPaymentStatus = async (req: Request, res: Response): Promise<void> => {
+export const getPaymentStatus = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { sessionToken } = req.params;
+    const userId = req.user?.id;
+
+    // ✅ Authentication check
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+      return;
+    }
 
     if (!sessionToken) {
       res.status(400).json({
         success: false,
         message: 'Session token is required'
       });
-      return; // Added return
+      return;
     }
 
     const paymentSession = await prisma.paymentSession.findUnique({
@@ -160,7 +206,16 @@ export const getPaymentStatus = async (req: Request, res: Response): Promise<voi
         success: false,
         message: 'Payment session not found'
       });
-      return; // Added return
+      return;
+    }
+
+    // ✅ Ownership check
+    if (paymentSession.userId && paymentSession.userId !== userId) {
+      res.status(403).json({
+        success: false,
+        message: 'You can only view your own payment sessions'
+      });
+      return;
     }
 
     res.status(200).json({
@@ -176,13 +231,13 @@ export const getPaymentStatus = async (req: Request, res: Response): Promise<voi
         quantity: paymentSession.quantity
       }
     });
-    return; // Added return
+    return;
   } catch (error: any) {
     console.error('Get payment status error:', error);
     res.status(500).json({ 
       success: false, 
       message: error.message || 'Failed to get payment status' 
     });
-    return; // Added return
+    return;
   }
 };
