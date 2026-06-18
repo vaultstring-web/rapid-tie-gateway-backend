@@ -1,6 +1,7 @@
 // controllers/admin/merchantManagement.controller.ts
 import { Request, Response } from 'express';
 import { prisma } from '../../server';
+import { TransactionStatus } from '@prisma/client';
 
 // Cache for merchant list
 const merchantCache = new Map<string, { data: any; expiresAt: number }>();
@@ -58,7 +59,7 @@ export const getAllMerchants = async (req: Request, res: Response): Promise<void
           },
         },
         transactions: {
-          where: { status: 'success' },
+          where: { status: TransactionStatus.SUCCESS },
           select: { amount: true, createdAt: true },
         },
         products: true,
@@ -408,7 +409,7 @@ async function getMerchantMonthlyRevenue(merchantId: string) {
     const transactions = await prisma.transaction.aggregate({
       where: {
         merchantId,
-        status: 'success',
+        status: TransactionStatus.SUCCESS,
         createdAt: {
           gte: startDate,
           lte: endDate,

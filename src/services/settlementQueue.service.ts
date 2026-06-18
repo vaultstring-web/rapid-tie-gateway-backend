@@ -1,25 +1,29 @@
-import Queue from 'bull';
+// src/services/settlementQueue.service.ts
+import { Queue } from 'bullmq';
 import { prisma } from '../server';
+import { logger } from '../utils/logger';
 
-export const settlementQueue = new Queue('settlement', process.env.REDIS_URL || 'redis://localhost:6379');
+// Settlement queue configuration
+const settlementQueue = new Queue('settlement', {
+  connection: {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: parseInt(process.env.REDIS_PORT || '6379'),
+  },
+});
 
-function dayKey(d: Date): string {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}${m}${day}`;
+interface SettlementJobData {
+  periodStart: Date;
+  periodEnd: Date;
+  entity: 'merchant' | 'organizer' | 'all';
+  requestedBy?: string;
 }
 
-settlementQueue.process(async (job) => {
-  const { periodStart, periodEnd, entity } = job.data as {
-    periodStart: string;
-    periodEnd: string;
-    entity: 'merchant' | 'organizer' | 'all';
-    requestedBy?: string;
-  };
-
+async function processSettlement(data: SettlementJobData) {
+  const { periodStart, periodEnd, entity } = data;
   const start = new Date(periodStart);
   const end = new Date(periodEnd);
+
+  logger.info(`Processing settlement for period ${start.toISOString()} to ${end.toISOString()}`);
 
   const includeMerchants = entity === 'merchant' || entity === 'all';
   const includeOrganizers = entity === 'organizer' || entity === 'all';
@@ -27,17 +31,13 @@ settlementQueue.process(async (job) => {
   const created: any[] = [];
 
   if (includeMerchants) {
-    const merchants = await prisma.merchant.findMany({ where: { status: 'ACTIVE' }, select: { id: true, feePercentage: true } });
+    const merchants = await prisma.merchant.findMany({
+      where: { status: 'ACTIVE' },
+      select: { id: true, feePercentage: true },
+    });
 
     for (const merchant of merchants) {
-      const settlementRef = `SET-M-${merchant.id}-${dayKey(start)}-${dayKey(end)}`;
-
-      const existing = await prisma.settlement.findFirst({
-        where: { merchantId: merchant.id, periodStart: start, periodEnd: end },
-        select: { id: true },
-      });
-      if (existing) continue;
-
+      // This query will use @@index([merchantId, status, createdAt]) index
       const agg = await prisma.transaction.aggregate({
         where: {
           merchantId: merchant.id,
@@ -48,12 +48,10 @@ settlementQueue.process(async (job) => {
         _count: { _all: true },
       });
 
-      const grossAmount = agg._sum.amount || 0;
-      const feeAmount = agg._sum.fee || 0;
-      const netAmount = agg._sum.netAmount || Math.max(0, grossAmount - feeAmount);
       const transactionCount = agg._count._all || 0;
-
       if (transactionCount === 0) continue;
+
+      const settlementRef = `SET-M-${merchant.id}-${start.toISOString().split('T')[0]}-${end.toISOString().split('T')[0]}`;
 
       const settlement = await prisma.settlement.create({
         data: {
@@ -61,13 +59,11 @@ settlementQueue.process(async (job) => {
           settlementRef,
           periodStart: start,
           periodEnd: end,
-          grossAmount,
-          feeAmount,
-          netAmount,
+          grossAmount: agg._sum.amount || 0,
+          feeAmount: agg._sum.fee || 0,
+          netAmount: agg._sum.netAmount || 0,
           transactionCount,
           status: 'pending',
-          bankReference: null,
-          settledAt: null,
         },
       });
 
@@ -76,16 +72,13 @@ settlementQueue.process(async (job) => {
   }
 
   if (includeOrganizers) {
-    const organizers = await prisma.eventOrganizer.findMany({ where: { status: 'ACTIVE' }, select: { id: true } });
+    const organizers = await prisma.eventOrganizer.findMany({
+      where: { status: 'ACTIVE' },
+      select: { id: true },
+    });
+
     for (const organizer of organizers) {
-      const settlementRef = `SET-O-${organizer.id}-${dayKey(start)}-${dayKey(end)}`;
-
-      const existing = await prisma.settlement.findFirst({
-        where: { organizerId: organizer.id, periodStart: start, periodEnd: end },
-        select: { id: true },
-      });
-      if (existing) continue;
-
+      // This query will use @@index([organizerId, status, createdAt]) index
       const agg = await prisma.transaction.aggregate({
         where: {
           organizerId: organizer.id,
@@ -96,12 +89,10 @@ settlementQueue.process(async (job) => {
         _count: { _all: true },
       });
 
-      const grossAmount = agg._sum.amount || 0;
-      const feeAmount = agg._sum.fee || 0;
-      const netAmount = agg._sum.netAmount || Math.max(0, grossAmount - feeAmount);
       const transactionCount = agg._count._all || 0;
-
       if (transactionCount === 0) continue;
+
+      const settlementRef = `SET-O-${organizer.id}-${start.toISOString().split('T')[0]}-${end.toISOString().split('T')[0]}`;
 
       const settlement = await prisma.settlement.create({
         data: {
@@ -109,13 +100,11 @@ settlementQueue.process(async (job) => {
           settlementRef,
           periodStart: start,
           periodEnd: end,
-          grossAmount,
-          feeAmount,
-          netAmount,
+          grossAmount: agg._sum.amount || 0,
+          feeAmount: agg._sum.fee || 0,
+          netAmount: agg._sum.netAmount || 0,
           transactionCount,
           status: 'pending',
-          bankReference: null,
-          settledAt: null,
         },
       });
 
@@ -123,6 +112,14 @@ settlementQueue.process(async (job) => {
     }
   }
 
+  logger.info(`Created ${created.length} settlement records`);
   return { success: true, createdCount: created.length };
+}
+
+// Process settlement jobs
+settlementQueue.process(async (job) => {
+  const data = job.data as SettlementJobData;
+  return await processSettlement(data);
 });
 
+export { settlementQueue, processSettlement };
