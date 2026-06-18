@@ -306,20 +306,20 @@ enum TicketSaleStatus {
 
 // Ticket Sale Model
 model TicketSale {
-  id            String           @id @default(cuid())
+  id            String      @id @default(cuid())
   organizerId   String
   eventId       String
-  orderNumber   String           @unique
+  orderNumber   String      @unique
   customerName  String
   customerEmail String
   customerPhone String?
   totalAmount   Float
   feeAmount     Float
   netAmount     Float
-  status        TicketSaleStatus @default(COMPLETED)
+  status        SaleStatus  @default(COMPLETED)  // Now using enum
   paymentMethod String
   transactionId String?
-  createdAt     DateTime         @default(now())
+  createdAt     DateTime    @default(now())
 
   organizer EventOrganizer @relation(fields: [organizerId], references: [id])
   event     Event          @relation(fields: [eventId], references: [id])
@@ -552,30 +552,35 @@ model DisbursementItem {
 
 // Payments & Transactions
 model Transaction {
-  id             String   @id @default(cuid())
+  id             String            @id @default(cuid())
   merchantId     String?
   organizerId    String?
   orderId        String?
-  transactionRef String   @unique
+  transactionRef String            @unique
   amount         Float
-  fee            Float    @default(0)
+  fee            Float             @default(0)
   netAmount      Float
-  currency       String   @default("MWK")
-  status         String
+  currency       String            @default("MWK")
+  status         TransactionStatus  // Now using enum
   paymentMethod  String
   provider       String?
   providerRef    String?
   metadata       Json?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
   merchant  Merchant?       @relation(fields: [merchantId], references: [id])
   organizer EventOrganizer? @relation(fields: [organizerId], references: [id])
   refunds   Refund[]
   auditLogs AuditLog[]
   flaggedTransactions FlaggedTransaction[]
-}
 
+  @@index([merchantId, status, createdAt])
+  @@index([organizerId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([orderId])
+  @@index([providerRef])
+}
 model PaymentLink {
   id          String    @id @default(cuid())
   merchantId  String
@@ -989,4 +994,20 @@ enum DsaStatus {
   REJECTED
   PAID
   CANCELLED
+}
+
+// NEW ENUMS FOR TASK 3.3
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REVERSED
+  REFUNDED
+}
+
+enum SaleStatus {
+  RESERVED
+  COMPLETED
+  CANCELLED
+  REFUNDED
 }
