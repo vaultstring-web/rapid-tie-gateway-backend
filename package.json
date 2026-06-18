@@ -12,6 +12,8 @@
     "dev": "nodemon src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "type-check": "tsc --noEmit",
+    "type-check:watch": "tsc --noEmit --watch",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
@@ -51,6 +53,7 @@
     "sharp": "^0.32.5",
     "socket.io": "^4.7.2",
     "speakeasy": "^2.0.0",
+    "stripe": "^22.2.0",
     "uuid": "^9.0.1",
     "winston": "^3.10.0",
     "zod": "^3.25.76"

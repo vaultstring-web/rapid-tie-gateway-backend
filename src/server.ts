@@ -14,6 +14,7 @@ import { logger } from './utils/logger';
 import { errorHandler } from './utils/errorHandler';
 import { notfound } from './middlewares/notfound';
 import attendeesRoutes from './routes/attendees.routes';
+import { redactSensitiveData, getBodyLogLevel } from './utils/redactSensitiveData';
 
 // Load environment variables
 dotenv.config();
@@ -90,20 +91,33 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 app.use('/api', limiter);
 
-// Request logger middleware for terminal debugging
+// Request logger middleware with sensitive data redaction
 app.use((req: Request, res: Response, next: NextFunction) => {
   const start = Date.now();
   const oldJson = res.json;
+  const logLevel = getBodyLogLevel();
   
   res.json = function (body) {
     const duration = Date.now() - start;
+    
+    // Always log method, URL, status, and duration (safe)
     console.log(`[API Log] ${req.method} ${req.originalUrl} - Status: ${res.statusCode} - Time: ${duration}ms`);
+    
+    // Log request body based on environment
     if (req.body && Object.keys(req.body).length > 0) {
-      const sanitized = { ...req.body };
-      if (sanitized.password) sanitized.password = '***';
-      if (sanitized.token) sanitized.token = '***';
-      console.log(`  Body:`, JSON.stringify(sanitized));
+      // Always redact sensitive data
+      const redactedBody = redactSensitiveData(req.body);
+      
+      if (logLevel === 'full') {
+        // Development debug - log redacted body
+        console.log(`  Body:`, JSON.stringify(redactedBody));
+      } else if (logLevel === 'redacted') {
+        // Default - log redacted body
+        console.log(`  Body:`, JSON.stringify(redactedBody));
+      }
+      // logLevel === 'none' - don't log body at all (production)
     }
+    
     return oldJson.call(this, body);
   };
   
@@ -314,7 +328,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     // Clean up transaction monitor connection on disconnect
     removeMonitorConnection(socket.id);
-    logger.info(`Client disconnected: ${socket.id}`);
+    logger.info(`Client ${socket.id} disconnected`);
   });
 });
 
