@@ -1,14 +1,17 @@
+// src/integrations/payments/providerRegistry.ts
 import { PaymentProvider } from './paymentProvider';
 import { airtelProvider } from './providers/airtel.provider';
 import { mpambaProvider } from './providers/mpamba.provider';
 import { cardProvider } from './providers/card.provider';
 import { mockPaymentProvider } from './mockPaymentProvider';
+// import { stripeProvider } from './providers/stripe.provider'; 
 
 const providers: Record<string, PaymentProvider> = {
   airtel: airtelProvider,
   mpamba: mpambaProvider,
   card: cardProvider,
   mock: mockPaymentProvider,
+  //stripe: stripeProvider,
 };
 
 function normalize(input: string): string {
@@ -17,6 +20,15 @@ function normalize(input: string): string {
 
 export function resolveProvider(params: { paymentMethod?: string; provider?: string }): PaymentProvider {
   const explicit = normalize(params.provider || process.env.PAYMENT_PROVIDER || '');
+  
+  // 🔒 GUARD: Block mock provider in production
+  if (process.env.NODE_ENV === 'production' && explicit === 'mock') {
+    throw new Error(
+      'Mock payment provider is NOT allowed.' +
+      'Please use (airtel_money, mpamba).'
+    );
+  }
+  
   if (explicit && providers[explicit]) return providers[explicit];
 
   const method = normalize(params.paymentMethod || '');
@@ -33,4 +45,3 @@ export function resolveProvider(params: { paymentMethod?: string; provider?: str
 export function getProviderById(providerId: string): PaymentProvider | null {
   return providers[normalize(providerId)] || null;
 }
-

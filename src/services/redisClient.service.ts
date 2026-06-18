@@ -2,73 +2,79 @@
 import Redis from 'ioredis';
 
 let redisClient: Redis | null = null;
-let isRedisAvailable: boolean = true;
+let connectionAttempts = 0;
+const MAX_CONNECTION_ATTEMPTS = 3;
 
-// In-memory store for mock redis
-const mockStore = new Map();
+export class RedisConnectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RedisConnectionError';
+  }
+}
 
-const createMockRedis = (): any => ({
-  get: async (key: string) => mockStore.get(key) || null,
-  set: async (key: string, value: string, ..._args: any[]) => {
-    // Simple implementation that ignores TTL/NX for mock
-    mockStore.set(key, value);
-    return 'OK';
-  },
-  setex: async (key: string, _ttl: number, value: string) => {
-    mockStore.set(key, value);
-  },
-  keys: async (pattern: string) => {
-    const results: string[] = [];
-    // Simple pattern matching - supports * wildcard at end
-    const searchPattern = pattern.replace(/\*/g, '.*');
-    const regex = new RegExp(`^${searchPattern}$`);
-    for (const key of mockStore.keys()) {
-      if (regex.test(key)) {
-        results.push(key);
-      }
-    }
-    return results;
-  },
-  del: async (...keys: string[]) => {
-    for (const key of keys) {
-      mockStore.delete(key);
-    }
-    return keys.length;
-  },
-  on: () => {},
-  quit: async () => {
-    mockStore.clear();
-  },
-});
+const getRedisClient = (): Redis => {
 
-export const getRedisClient = (): any => {
-  if (!isRedisAvailable) {
-    return createMockRedis();
+  if (redisClient && redisClient.status === 'ready') {
+    connectionAttempts = 0; 
+    return redisClient;
   }
 
-  if (!redisClient) {
+  
+  if (connectionAttempts >= MAX_CONNECTION_ATTEMPTS) {
+    throw new RedisConnectionError(
+      `Redis connection failed after ${MAX_CONNECTION_ATTEMPTS} attempts. Service temporarily unavailable.`
+    );
+  }
+
+ 
+  if (!redisClient || redisClient.status === 'end') {
     const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+    
     redisClient = new Redis(redisUrl, {
       retryStrategy: (times) => {
-        if (times > 2) {
-          isRedisAvailable = false;
-          console.warn('⚠️ Redis unavailable after multiple attempts - disabling cache');
-          return null;
+        connectionAttempts = times;
+        
+        if (times > MAX_CONNECTION_ATTEMPTS) {
+          console.error(`❌ Redis connection failed after ${times} attempts`);
+          return null; 
         }
-        return Math.min(times * 500, 2000);
+        
+        const delay = Math.min(times * 1000, 5000);
+        console.warn(`⚠️ Redis connection attempt ${times} failed. Retrying in ${delay}ms...`);
+        return delay;
       },
+      maxRetriesPerRequest: 3,
+      enableReadyCheck: true,
     });
-    
+
+    // Handle connection events
     redisClient.on('connect', () => {
       console.log('✅ Redis client connected');
-      isRedisAvailable = true;
+      connectionAttempts = 0;
     });
-    
+
+    redisClient.on('ready', () => {
+      console.log('✅ Redis client ready');
+    });
+
     redisClient.on('error', (err) => {
       console.error('❌ Redis client error:', err.message);
     });
+
+    redisClient.on('close', () => {
+      console.warn('⚠️ Redis connection closed');
+    });
   }
-  
+
+  // Check if connection is ready
+  if (redisClient.status !== 'ready') {
+    connectionAttempts++;
+    throw new RedisConnectionError(
+      `Redis connection not ready (status: ${redisClient.status}). Service temporarily unavailable.`
+    );
+  }
+
+  connectionAttempts = 0;
   return redisClient;
 };
 
@@ -80,4 +86,4 @@ export const closeRedisConnection = async (): Promise<void> => {
   }
 };
 
-export default { getRedisClient, closeRedisConnection };
+export { getRedisClient };

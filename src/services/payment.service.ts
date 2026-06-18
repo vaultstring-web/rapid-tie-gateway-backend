@@ -10,6 +10,7 @@ export interface PaymentInitiateData {
   paymentMethod: string;
   provider?: string;
   customerPhone?: string;
+   token?: string;
 }
 
 export interface WebhookData {
@@ -66,6 +67,7 @@ class PaymentService {
         currency: paymentSession.currency,
         transactionRef,
         customerPhone,
+        token: data.token,
         metadata: { sessionToken },
       });
 
