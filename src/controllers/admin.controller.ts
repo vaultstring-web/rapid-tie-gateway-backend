@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../server';
 import { Prisma } from '@prisma/client';
 import os from 'os';
+import { invalidateUserCache } from '../middlewares/auth';
 
 // Cache for admin metrics
 const metricsCache = new Map<string, { data: any; expiresAt: number }>();
@@ -359,6 +360,170 @@ export const getSystemHealthOnly = async (req: Request, res: Response): Promise<
 };
 
 // ======================
+// 👥 User Management - Suspend/Reactivate
+// ======================
+
+/**
+ * Suspend a user (admin only)
+ * Immediately invalidates cache so user can't authenticate
+ */
+export const suspendUser = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const adminUser = (req as any).user;
+    if (!adminUser || adminUser.role !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Access denied. Admin privileges required.' });
+      return;
+    }
+
+    const { userId } = req.params;
+
+    if (!userId) {
+      res.status(400).json({ success: false, message: 'User ID is required' });
+      return;
+    }
+
+    // Cannot suspend self
+    if (userId === adminUser.id) {
+      res.status(400).json({ success: false, message: 'You cannot suspend your own account' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, role: true, isActive: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    if (user.isActive === false) {
+      res.status(400).json({ success: false, message: 'User is already suspended' });
+      return;
+    }
+
+    // Update user to inactive
+    await prisma.user.update({
+      where: { id: userId },
+      data: { isActive: false },
+    });
+
+    // ✅ Invalidate cache immediately
+    await invalidateUserCache(userId);
+    console.log(`🔒 User ${userId} (${user.email}) suspended - cache invalidated`);
+
+    // Log activity
+    await prisma.activityLog.create({
+      data: {
+        userId: adminUser.id,
+        action: 'USER_SUSPENDED',
+        entity: 'User',
+        entityId: userId,
+        newValue: { 
+          suspendedBy: adminUser.email,
+          suspendedAt: new Date().toISOString(),
+          userEmail: user.email,
+          userRole: user.role,
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] as string,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `User ${user.email} suspended successfully`,
+      data: {
+        userId: user.id,
+        email: user.email,
+        suspendedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('Suspend user error:', error);
+    res.status(500).json({ success: false, message: 'Failed to suspend user' });
+  }
+};
+
+/**
+ * Reactivate a user (admin only)
+ * Immediately invalidates cache so user can authenticate again
+ */
+export const reactivateUser = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const adminUser = (req as any).user;
+    if (!adminUser || adminUser.role !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Access denied. Admin privileges required.' });
+      return;
+    }
+
+    const { userId } = req.params;
+
+    if (!userId) {
+      res.status(400).json({ success: false, message: 'User ID is required' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, role: true, isActive: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    if (user.isActive === true) {
+      res.status(400).json({ success: false, message: 'User is already active' });
+      return;
+    }
+
+    // Update user to active
+    await prisma.user.update({
+      where: { id: userId },
+      data: { isActive: true },
+    });
+
+    // ✅ Invalidate cache immediately
+    await invalidateUserCache(userId);
+    console.log(`🔓 User ${userId} (${user.email}) reactivated - cache invalidated`);
+
+    // Log activity
+    await prisma.activityLog.create({
+      data: {
+        userId: adminUser.id,
+        action: 'USER_REACTIVATED',
+        entity: 'User',
+        entityId: userId,
+        newValue: { 
+          reactivatedBy: adminUser.email,
+          reactivatedAt: new Date().toISOString(),
+          userEmail: user.email,
+          userRole: user.role,
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] as string,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `User ${user.email} reactivated successfully`,
+      data: {
+        userId: user.id,
+        email: user.email,
+        reactivatedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('Reactivate user error:', error);
+    res.status(500).json({ success: false, message: 'Failed to reactivate user' });
+  }
+};
+
+// ======================
 // 👥 Employee Management
 // ======================
 
@@ -617,6 +782,7 @@ export const getEmployeeById = async (req: Request, res: Response): Promise<void
     res.status(500).json({ success: false, message: 'Failed to fetch employee' });
   }
 };
+
 
 export const deleteEmployee = async (req: Request, res: Response): Promise<void> => {
   try {

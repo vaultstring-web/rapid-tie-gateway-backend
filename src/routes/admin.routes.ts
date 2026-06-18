@@ -1,6 +1,6 @@
 // routes/admin.routes.ts
 import { Router } from 'express';
-import { authenticate } from '../middlewares/auth';
+import { authenticate, authorize } from '../middlewares/auth';
 import { 
   getAdminDashboard, 
   clearAdminCache,
@@ -10,12 +10,15 @@ import {
   getAllEmployees,
   getEmployeeById,
   deleteEmployee,
+  suspendUser,
+  reactivateUser,
 } from '../controllers/admin.controller';
 
 const router: Router = Router();
 
-// Apply authentication to all admin routes
+// Apply authentication and admin authorization to all admin routes
 router.use(authenticate);
+router.use(authorize('ADMIN'));
 
 // GET /api/admin/dashboard - Admin dashboard with all metrics
 router.get('/dashboard', getAdminDashboard);
@@ -25,6 +28,16 @@ router.get('/health', getSystemHealthOnly);
 
 // DELETE /api/admin/cache - Clear admin dashboard cache
 router.delete('/cache', clearAdminCache);
+
+// ======================
+// 👥 User Management Routes
+// ======================
+
+// POST /api/admin/users/:userId/suspend - Suspend a user
+router.post('/users/:userId/suspend', suspendUser);
+
+// POST /api/admin/users/:userId/reactivate - Reactivate a suspended user
+router.post('/users/:userId/reactivate', reactivateUser);
 
 // ======================
 // 👥 Employee Management Routes
