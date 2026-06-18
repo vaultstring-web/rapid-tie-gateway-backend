@@ -119,13 +119,11 @@ class PaymentService {
         }
 
         await releaseLock(sessionToken);
-          await this.handleWebhook({
-        transactionRef,
-        status: 'success',
-        providerRef: paymentResult.providerRef,
-        amount: paymentSession.totalAmount,
-        metadata: { source: 'initiate_payment' }
-      });
+
+        // Finalize the sale (create tickets, increment sold count) directly
+        // instead of routing through handleWebhook to avoid double-update race
+        // conditions with external provider callbacks.
+        await finalizeSale(sessionToken);
         return {
           success: true,
           transaction,
@@ -167,13 +165,8 @@ class PaymentService {
           metadata: { error: errorMessage }
         }
       });
-    await this.handleWebhook({
-      transactionRef,
-      status: 'failed',
-      providerRef: '',
-      amount: paymentSession.totalAmount,
-      metadata: { source: 'initiate_payment', error: errorMessage }
-    });
+    // Do NOT call handleWebhook here — the failure is already recorded above.
+    // External provider webhooks will be handled separately via handleWebhook.
       throw new Error(errorMessage);
     }
   }
@@ -233,8 +226,7 @@ class PaymentService {
 }
 
   async handleWebhook(webhookData: WebhookData) {
-    // Fixed: Removed unused 'amount' variable
-    const { transactionRef, status, providerRef, metadata } = webhookData;
+    const { transactionRef, status, providerRef, amount, metadata } = webhookData;
 
     const transaction = await prisma.transaction.findUnique({
       where: { transactionRef },
@@ -245,6 +237,29 @@ class PaymentService {
 
     if (!transaction) {
       throw new Error(`Transaction not found: ${transactionRef}`);
+    }
+
+    // Idempotency guard: if the transaction is already in a terminal state, skip processing
+    if (
+      (status === 'success' && transaction.status === 'success') ||
+      (status === 'failed' && transaction.status === 'failed')
+    ) {
+      console.log(`Webhook duplicate skipped: transaction ${transactionRef} is already ${transaction.status}`);
+      return { success: true, transaction, duplicate: true };
+    }
+
+    // Amount validation: reject webhooks where the amount doesn't match the transaction
+    // Uses a tolerance of 0.01 to account for floating-point precision issues
+    const AMOUNT_TOLERANCE = 0.01;
+    if (amount !== undefined && Math.abs(amount - transaction.amount) > AMOUNT_TOLERANCE) {
+      console.error(
+        `Webhook amount mismatch for ${transactionRef}: ` +
+        `expected ${transaction.amount}, received ${amount}`
+      );
+      throw new Error(
+        `Amount mismatch: expected ${transaction.amount}, received ${amount}. ` +
+        `Transaction ${transactionRef} rejected.`
+      );
     }
 
     if (status === 'success' && transaction.status !== 'success') {
