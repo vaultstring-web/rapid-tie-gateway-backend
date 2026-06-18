@@ -18,6 +18,7 @@ model User {
   role              UserRole  @default(PUBLIC)
   emailVerified     Boolean   @default(false)
   phoneVerified     Boolean   @default(false)
+  isActive          Boolean   @default(true) 
   twoFactorEnabled  Boolean   @default(false)
   twoFactorSecret   String?
   twoFactorBackupCodes String[] @default([])
@@ -54,6 +55,7 @@ model User {
    communicationRecipients CommunicationRecipient[]
   communicationOptOuts   CommunicationOptOut[]
   auditLogs AuditLog[]
+  paymentSessions PaymentSession[]
 }
 
 model Session {
@@ -189,6 +191,7 @@ enum PaymentStatus {
 model PaymentSession {
   id            String        @id @default(cuid())
   sessionToken  String        @unique
+  userId        String?
   eventId       String
   tierId        String
   quantity      Int
@@ -206,6 +209,7 @@ model PaymentSession {
   event Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
   tier  TicketTier   @relation(fields: [tierId], references: [id], onDelete: Cascade)
   order TicketSale?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  user  User?        @relation(fields: [userId], references: [id])  
 }
 
 // Event Model
@@ -297,6 +301,7 @@ enum TicketSaleStatus {
   RESERVED
   COMPLETED
   CANCELLED
+  INVENTORY_CONFIRMED
 }
 
 // Ticket Sale Model
