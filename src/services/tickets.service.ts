@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { prisma } from '../server';
 import { acquireLock, getLock, getActiveLocksForTier } from "../services/inventoryLock.service";
+import { allocateTickets } from "./inventory.service";
 import { v4 as uuidv4 } from "uuid";
 
 export const validateTicketsService = async (
@@ -90,11 +91,8 @@ export const finalizeSale = async (sessionToken: string) => {
       data: { status: "COMPLETED" }
     });
 
-    // Increment tier sold count
-    await tx.ticketTier.update({
-      where: { id: lockData.tierId },
-      data: { sold: { increment: lockData.quantity } }
-    });
+    // Atomically increment tier sold count — fails if capacity is exceeded
+    await allocateTickets(tx, lockData.tierId, lockData.quantity);
 
     // Create ticket records
     const tickets = await Promise.all(
