@@ -1,6 +1,7 @@
 // controllers/order.controller.ts
 import { Request, Response } from 'express';
 import { prisma } from '../server';
+import { SaleStatus } from '@prisma/client';
 import QRCode from 'qrcode';
 import { sendTicketConfirmationEmail } from '../utils/email';
 
@@ -190,7 +191,7 @@ export const updateInventoryPermanently = async (req: Request, res: Response): P
     }
     
     // Check if inventory already updated
-    if (order.status === 'inventory_confirmed') {
+    if (order.status === SaleStatus.COMPLETED) {
       res.status(400).json({
         success: false,
         message: 'Inventory already updated for this order'
@@ -217,7 +218,7 @@ export const updateInventoryPermanently = async (req: Request, res: Response): P
     // Update order status
     await prisma.ticketSale.update({
       where: { id: order.id },
-      data: { status: 'inventory_confirmed' }
+      data: { status: SaleStatus.COMPLETED }
     });
     
     res.status(200).json({
@@ -225,7 +226,7 @@ export const updateInventoryPermanently = async (req: Request, res: Response): P
       message: 'Inventory updated permanently',
       data: {
         ticketsUpdated: ticketsByTier,
-        orderStatus: 'inventory_confirmed'
+        orderStatus: 'COMPLETED'
       }
     });
     return;

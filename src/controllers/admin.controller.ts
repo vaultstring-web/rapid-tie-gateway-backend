@@ -137,7 +137,7 @@ async function getPlatformEventMetrics() {
   const usedTickets = await prisma.ticket.count({ where: { status: 'USED' } });
   
   const transactions = await prisma.transaction.aggregate({
-    where: { status: 'success' },
+    where: { status: 'SUCCESS' },
     _sum: { amount: true, fee: true, netAmount: true },
   });
   
@@ -146,7 +146,7 @@ async function getPlatformEventMetrics() {
   const netRevenue = transactions._sum.netAmount || 0;
   
   const recentTransactions = await prisma.transaction.aggregate({
-    where: { status: 'success', createdAt: { gte: thirtyDaysAgo } },
+    where: { status: 'SUCCESS', createdAt: { gte: thirtyDaysAgo } },
     _sum: { amount: true },
   });
   const recentRevenue = recentTransactions._sum.amount || 0;

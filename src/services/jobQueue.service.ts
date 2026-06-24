@@ -1,50 +1,115 @@
-// services/jobQueue.service.ts
-import Queue from 'bull';
+import Queue, { Job, Queue as QueueType } from 'bull';
 import { prisma } from '../server';
+import { logger } from '../utils/logger';
+import { notifyQueueFailure, notifyQueueConnectionFailure } from '../utils/alerting';
+
+// Redis connection URL
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
 // Define job queues
-export const emailQueue = new Queue('email', process.env.REDIS_URL || 'redis://localhost:6379');
-export const notificationQueue = new Queue('notification', process.env.REDIS_URL || 'redis://localhost:6379');
-export const reminderQueue = new Queue('reminder', process.env.REDIS_URL || 'redis://localhost:6379');
-export const reportQueue = new Queue('report', process.env.REDIS_URL || 'redis://localhost:6379');
-export const cleanupQueue = new Queue('cleanup', process.env.REDIS_URL || 'redis://localhost:6379');
+export const emailQueue = new Queue('email', REDIS_URL);
+export const notificationQueue = new Queue('notification', REDIS_URL);
+export const reminderQueue = new Queue('reminder', REDIS_URL);
+export const reportQueue = new Queue('report', REDIS_URL);
+export const cleanupQueue = new Queue('cleanup', REDIS_URL);
+
+// Default job options
+const defaultJobOptions = {
+  attempts: 3,
+  backoff: { type: 'exponential' as const, delay: 5000 },
+  removeOnComplete: true,
+  removeOnFail: false, // Keep failed jobs for debugging
+};
+
+// ======================
+// Queue Error Handlers
+// ======================
+
+function setupQueueErrorHandlers(queue: QueueType, queueName: string) {
+  // ✅ Error event handler for queue-level connection failures
+  queue.on('error', (error: Error) => {
+    notifyQueueConnectionFailure(queueName, error);
+  });
+
+  // ✅ Failed event handler for individual jobs
+  queue.on('failed', (job: Job | undefined, error: Error) => {
+    if (!job) return;
+    
+    const attemptsMade = job.attemptsMade || 0;
+    const maxAttempts = job.opts?.attempts || 3;
+    
+    // Only notify on final attempt failure
+    if (attemptsMade >= maxAttempts) {
+      notifyQueueFailure(
+        queueName,
+        job.id!,
+        error,
+        attemptsMade,
+        job.data
+      );
+    } else {
+      logger.warn(`⚠️ ${queueName} job ${job.id} failed, retry ${attemptsMade}/${maxAttempts}: ${error.message}`);
+    }
+  });
+
+  // ✅ Completed event for monitoring
+  queue.on('completed', (job: Job) => {
+    logger.info(`✅ ${queueName} job ${job.id} completed successfully`);
+  });
+
+  // ✅ Stalled event
+  queue.on('stalled', (job: Job) => {
+    logger.warn(`⚠️ ${queueName} job ${job.id} stalled`);
+  });
+}
+
+// Apply handlers to all queues
+setupQueueErrorHandlers(emailQueue, 'email');
+setupQueueErrorHandlers(notificationQueue, 'notification');
+setupQueueErrorHandlers(reminderQueue, 'reminder');
+setupQueueErrorHandlers(reportQueue, 'report');
+setupQueueErrorHandlers(cleanupQueue, 'cleanup');
+
+// ======================
+// Job Processors
+// ======================
 
 // Email job processor
-emailQueue.process(async (job) => {
+emailQueue.process(async (job: Job) => {
   const { to, subject } = job.data;
-  console.log(`📧 Processing email to ${to}: ${subject}`);
+  logger.info(`📧 Processing email to ${to}: ${subject}`);
   // Actual email sending logic here
   return { success: true, messageId: `msg_${Date.now()}` };
 });
 
 // Notification job processor
-notificationQueue.process(async (job) => {
+notificationQueue.process(async (job: Job) => {
   const { userId, title } = job.data;
-  console.log(`🔔 Processing notification for user ${userId}: ${title}`);
+  logger.info(`🔔 Processing notification for user ${userId}: ${title}`);
   // Actual notification logic here
   return { success: true, notificationId: `notif_${Date.now()}` };
 });
 
 // Reminder job processor
-reminderQueue.process(async (job) => {
+reminderQueue.process(async (job: Job) => {
   const { eventId, userId, daysUntil } = job.data;
-  console.log(`⏰ Processing reminder for event ${eventId}, user ${userId}, ${daysUntil} days until event`);
+  logger.info(`⏰ Processing reminder for event ${eventId}, user ${userId}, ${daysUntil} days until event`);
   // Actual reminder logic here
   return { success: true };
 });
 
 // Report job processor
-reportQueue.process(async (job) => {
+reportQueue.process(async (job: Job) => {
   const { reportType, format } = job.data;
-  console.log(`📊 Generating ${reportType} report in ${format} format`);
+  logger.info(`📊 Generating ${reportType} report in ${format} format`);
   // Actual report generation logic here
   return { success: true, reportUrl: `/reports/${reportType}_${Date.now()}.${format}` };
 });
 
 // Cleanup job processor
-cleanupQueue.process(async (job) => {
+cleanupQueue.process(async (job: Job) => {
   const { olderThan, type } = job.data;
-  console.log(`🧹 Cleaning up ${type} older than ${olderThan} days`);
+  logger.info(`🧹 Cleaning up ${type} older than ${olderThan} days`);
   
   if (type === 'logs') {
     const cutoffDate = new Date();
@@ -57,50 +122,78 @@ cleanupQueue.process(async (job) => {
   return { success: true, deletedCount: 0 };
 });
 
-// Add job to queue
+// ======================
+// Job Queue Functions
+// ======================
+
 export async function addEmailJob(to: string, subject: string, content: string, _data?: any) {
-  return await emailQueue.add({ to, subject, content, data: _data }, {
-    attempts: 3,
-    backoff: { type: 'exponential', delay: 5000 },
-    removeOnComplete: true,
-  });
+  return await emailQueue.add(
+    { to, subject, content, data: _data },
+    { ...defaultJobOptions, removeOnComplete: true }
+  );
 }
 
 export async function addNotificationJob(userId: string, title: string, message: string, _type: string) {
-  return await notificationQueue.add({ userId, title, message, type: _type }, {
-    attempts: 3,
-    backoff: { type: 'exponential', delay: 5000 },
-  });
+  return await notificationQueue.add(
+    { userId, title, message, type: _type },
+    { ...defaultJobOptions, removeOnComplete: true }
+  );
 }
 
 export async function addReminderJob(eventId: string, userId: string, daysUntil: number) {
   const delay = daysUntil === 1 ? 24 * 60 * 60 * 1000 : (daysUntil - 1) * 24 * 60 * 60 * 1000;
-  return await reminderQueue.add({ eventId, userId, daysUntil }, {
-    delay,
-    attempts: 2,
-  });
+  return await reminderQueue.add(
+    { eventId, userId, daysUntil },
+    {
+      ...defaultJobOptions,
+      delay,
+      attempts: 2,
+    }
+  );
 }
 
 export async function addReportJob(reportType: string, format: string, _filters?: any) {
-  return await reportQueue.add({ reportType, format, filters: _filters }, {
-    attempts: 2,
-    removeOnComplete: true,
-  });
+  return await reportQueue.add(
+    { reportType, format, filters: _filters },
+    { ...defaultJobOptions, removeOnComplete: true }
+  );
 }
 
-// Schedule recurring jobs
+// ======================
+// Schedule Recurring Jobs
+// ======================
+
 export async function scheduleRecurringJobs() {
   // Daily cleanup job at 2 AM
-  await cleanupQueue.add({ olderThan: 30, type: 'logs' }, {
-    repeat: { cron: '0 2 * * *' },
-    jobId: 'daily-cleanup',
-  });
+  await cleanupQueue.add(
+    { olderThan: 30, type: 'logs' },
+    {
+      repeat: { cron: '0 2 * * *' },
+      jobId: 'daily-cleanup',
+      ...defaultJobOptions,
+    }
+  );
   
   // Hourly reminder check
-  await reminderQueue.add({ check: true }, {
-    repeat: { cron: '0 * * * *' },
-    jobId: 'hourly-reminders',
-  });
+  await reminderQueue.add(
+    { check: true },
+    {
+      repeat: { cron: '0 * * * *' },
+      jobId: 'hourly-reminders',
+      ...defaultJobOptions,
+    }
+  );
   
-  console.log('✅ Scheduled recurring jobs');
+  logger.info('✅ Scheduled recurring jobs');
 }
+
+process.on('SIGTERM', async () => {
+  await Promise.all([
+    emailQueue.close(),
+    notificationQueue.close(),
+    reminderQueue.close(),
+    reportQueue.close(),
+    cleanupQueue.close(),
+  ]);
+  logger.info('All queues closed');
+});

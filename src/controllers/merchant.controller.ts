@@ -85,7 +85,7 @@ export class MerchantController {
         prisma.transaction.aggregate({
           where: {
             merchantId: merchant.id,
-            status: 'success',
+            status: 'SUCCESS',
             createdAt: { gte: thirtyDaysAgo },
           },
           _sum: { amount: true, fee: true, netAmount: true },
@@ -95,7 +95,7 @@ export class MerchantController {
           where: { merchantId: merchant.id, createdAt: { gte: thirtyDaysAgo } },
         }),
         prisma.transaction.count({
-          where: { merchantId: merchant.id, status: 'success', createdAt: { gte: thirtyDaysAgo } },
+          where: { merchantId: merchant.id, status: 'SUCCESS', createdAt: { gte: thirtyDaysAgo } },
         }),
         prisma.transaction.findMany({
           where: { merchantId: merchant.id },
@@ -523,12 +523,12 @@ export class MerchantController {
 
       const refundEligibility = {
         eligible:
-          transaction.status === 'success' &&
+          transaction.status === 'SUCCESS' &&
           !alreadyRefunded &&
           transaction.createdAt >= thirtyDaysAgo,
         reason: alreadyRefunded
           ? 'Already fully refunded'
-          : transaction.status !== 'success'
+          : transaction.status !== 'SUCCESS'
           ? 'Transaction not successful'
           : transaction.createdAt < thirtyDaysAgo
           ? 'Outside 30-day refund window'
@@ -700,7 +700,7 @@ export class MerchantController {
       });
 
       if (!transaction) return next(new AppError('Transaction not found', 404));
-      if (transaction.status !== 'success') return next(new AppError('Only successful transactions can be refunded', 400));
+      if (transaction.status !== 'SUCCESS') return next(new AppError('Only successful transactions can be refunded', 400));
 
       const alreadyRefunded = transaction.refunds
         .filter((refund: (typeof transaction.refunds)[number]) => refund.status === 'completed')
@@ -724,7 +724,7 @@ export class MerchantController {
         prisma.transaction.update({
           where: { id: transactionId },
           data: {
-            status: refundAmount >= refundable ? 'refunded' : 'success',
+            status: refundAmount >= refundable ? 'REFUNDED' : 'SUCCESS',
             updatedAt: new Date(),
           },
         }),
