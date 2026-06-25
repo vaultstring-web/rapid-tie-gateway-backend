@@ -10,6 +10,7 @@ export interface PaymentInitiateData {
   paymentMethod: string;
   provider?: string;
   customerPhone?: string;
+   token?: string;
 }
 
 export interface WebhookData {
@@ -66,6 +67,7 @@ class PaymentService {
         currency: paymentSession.currency,
         transactionRef,
         customerPhone,
+        token: data.token,
         metadata: { sessionToken },
       });
 
@@ -77,7 +79,7 @@ class PaymentService {
             fee: paymentSession.totalAmount * 0.03,
             netAmount: paymentSession.totalAmount * 0.97,
             currency: paymentSession.currency,
-            status: 'success',
+            status: 'SUCCESS',
             paymentMethod,
             provider: providerImpl.id,
             providerRef: paymentResult.providerRef,
@@ -117,13 +119,11 @@ class PaymentService {
         }
 
         await releaseLock(sessionToken);
-          await this.handleWebhook({
-        transactionRef,
-        status: 'success',
-        providerRef: paymentResult.providerRef,
-        amount: paymentSession.totalAmount,
-        metadata: { source: 'initiate_payment' }
-      });
+
+        // Finalize the sale (create tickets, increment sold count) directly
+        // instead of routing through handleWebhook to avoid double-update race
+        // conditions with external provider callbacks.
+        await finalizeSale(sessionToken);
         return {
           success: true,
           transaction,
@@ -145,7 +145,7 @@ class PaymentService {
           fee: 0,
           netAmount: 0,
           currency: paymentSession.currency,
-          status: 'failed',
+          status: 'FAILED',
           paymentMethod,
           provider: providerImpl.id,
           organizerId: paymentSession.event.organizerId,
@@ -165,13 +165,8 @@ class PaymentService {
           metadata: { error: errorMessage }
         }
       });
-    await this.handleWebhook({
-      transactionRef,
-      status: 'failed',
-      providerRef: '',
-      amount: paymentSession.totalAmount,
-      metadata: { source: 'initiate_payment', error: errorMessage }
-    });
+    // Do NOT call handleWebhook here — the failure is already recorded above.
+    // External provider webhooks will be handled separately via handleWebhook.
       throw new Error(errorMessage);
     }
   }
@@ -231,7 +226,6 @@ class PaymentService {
 }
 
   async handleWebhook(webhookData: WebhookData) {
-    // Fixed: Removed unused 'amount' variable
     const { transactionRef, status, providerRef, metadata } = webhookData;
 
     const transaction = await prisma.transaction.findUnique({
@@ -245,11 +239,11 @@ class PaymentService {
       throw new Error(`Transaction not found: ${transactionRef}`);
     }
 
-    if (status === 'success' && transaction.status !== 'success') {
+    if (status === 'success' && transaction.status !== 'SUCCESS') {
       await prisma.transaction.update({
         where: { id: transaction.id },
         data: {
-          status: 'success',
+          status: 'SUCCESS',
           providerRef,
           metadata: { ...(transaction.metadata as any || {}), webhook: metadata }
         }
@@ -283,11 +277,11 @@ class PaymentService {
           }
         });
       }
-    } else if (status === 'failed' && transaction.status !== 'failed') {
+    } else if (status === 'failed' && transaction.status !== 'FAILED') {
       await prisma.transaction.update({
         where: { id: transaction.id },
         data: {
-          status: 'failed',
+          status: 'FAILED',
           metadata: { ...(transaction.metadata as any || {}), webhookError: metadata }
         }
       });

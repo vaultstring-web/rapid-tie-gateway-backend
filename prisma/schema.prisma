@@ -18,6 +18,7 @@ model User {
   role              UserRole  @default(PUBLIC)
   emailVerified     Boolean   @default(false)
   phoneVerified     Boolean   @default(false)
+  isActive          Boolean   @default(true) 
   twoFactorEnabled  Boolean   @default(false)
   twoFactorSecret   String?
   twoFactorBackupCodes String[] @default([])
@@ -54,6 +55,7 @@ model User {
    communicationRecipients CommunicationRecipient[]
   communicationOptOuts   CommunicationOptOut[]
   auditLogs AuditLog[]
+  paymentSessions PaymentSession[]
 }
 
 model Session {
@@ -189,6 +191,7 @@ enum PaymentStatus {
 model PaymentSession {
   id            String        @id @default(cuid())
   sessionToken  String        @unique
+  userId        String?
   eventId       String
   tierId        String
   quantity      Int
@@ -206,6 +209,7 @@ model PaymentSession {
   event Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
   tier  TicketTier   @relation(fields: [tierId], references: [id], onDelete: Cascade)
   order TicketSale?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  user  User?        @relation(fields: [userId], references: [id])  
 }
 
 // Event Model
@@ -297,24 +301,25 @@ enum TicketSaleStatus {
   RESERVED
   COMPLETED
   CANCELLED
+  INVENTORY_CONFIRMED
 }
 
 // Ticket Sale Model
 model TicketSale {
-  id            String           @id @default(cuid())
+  id            String      @id @default(cuid())
   organizerId   String
   eventId       String
-  orderNumber   String           @unique
+  orderNumber   String      @unique
   customerName  String
   customerEmail String
   customerPhone String?
   totalAmount   Float
   feeAmount     Float
   netAmount     Float
-  status        TicketSaleStatus @default(COMPLETED)
+  status        SaleStatus  @default(COMPLETED)  // Now using enum
   paymentMethod String
   transactionId String?
-  createdAt     DateTime         @default(now())
+  createdAt     DateTime    @default(now())
 
   organizer EventOrganizer @relation(fields: [organizerId], references: [id])
   event     Event          @relation(fields: [eventId], references: [id])
@@ -547,30 +552,35 @@ model DisbursementItem {
 
 // Payments & Transactions
 model Transaction {
-  id             String   @id @default(cuid())
+  id             String            @id @default(cuid())
   merchantId     String?
   organizerId    String?
   orderId        String?
-  transactionRef String   @unique
+  transactionRef String            @unique
   amount         Float
-  fee            Float    @default(0)
+  fee            Float             @default(0)
   netAmount      Float
-  currency       String   @default("MWK")
-  status         String
+  currency       String            @default("MWK")
+  status         TransactionStatus  // Now using enum
   paymentMethod  String
   provider       String?
   providerRef    String?
   metadata       Json?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
   merchant  Merchant?       @relation(fields: [merchantId], references: [id])
   organizer EventOrganizer? @relation(fields: [organizerId], references: [id])
   refunds   Refund[]
   auditLogs AuditLog[]
   flaggedTransactions FlaggedTransaction[]
-}
 
+  @@index([merchantId, status, createdAt])
+  @@index([organizerId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([orderId])
+  @@index([providerRef])
+}
 model PaymentLink {
   id          String    @id @default(cuid())
   merchantId  String
@@ -984,4 +994,20 @@ enum DsaStatus {
   REJECTED
   PAID
   CANCELLED
+}
+
+// NEW ENUMS FOR TASK 3.3
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REVERSED
+  REFUNDED
+}
+
+enum SaleStatus {
+  RESERVED
+  COMPLETED
+  CANCELLED
+  REFUNDED
 }

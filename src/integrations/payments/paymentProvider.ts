@@ -3,12 +3,16 @@ export interface ProviderInitiateInput {
   currency: string;
   transactionRef: string;
   customerPhone?: string;
+  token?:string;
   metadata?: Record<string, any>;
 }
 
 export interface ProviderInitiateResult {
   success: boolean;
   providerRef: string;
+  requiresAction?: boolean;  
+  clientSecret?: string;     
+  error?: string; 
   raw?: any;
 }
 

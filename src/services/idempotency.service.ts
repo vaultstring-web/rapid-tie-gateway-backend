@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import { getRedisClient } from './redisClient.service';
+import { getRedisClient, RedisConnectionError } from './redisClient.service';
+import { monitor } from '../utils/monitoring';
 
 type IdempotencyRecord =
   | { status: 'processing'; requestHash: string; createdAt: string }
@@ -9,7 +10,8 @@ export type IdempotencyBeginResult =
   | { type: 'acquired'; key: string; requestHash: string }
   | { type: 'replay'; key: string; httpStatus: number; body: any }
   | { type: 'conflict'; key: string; message: string }
-  | { type: 'busy'; key: string; message: string };
+  | { type: 'busy'; key: string; message: string }
+  | { type: 'unavailable'; message: string }; // ✅ For Redis unavailable
 
 export function hashRequestBody(body: unknown): string {
   const payload = typeof body === 'string' ? body : JSON.stringify(body ?? {});
@@ -25,7 +27,20 @@ export async function beginIdempotency(params: {
   const { namespace, idempotencyKey, requestHash, ttlSeconds = 60 * 30 } = params;
   const key = `idem:${namespace}:${idempotencyKey}`;
 
-  const redis = await getRedisClient();
+  let redis;
+  try {
+    redis = getRedisClient();
+  } catch (error) {
+    // ✅ Redis connection failed - log return 503 error
+    if (error instanceof RedisConnectionError) {
+      monitor.redisUnavailable('idempotency check', error.message);
+      return {
+        type: 'unavailable',
+        message: 'Payment service temporarily unavailable. Please try again later.'
+      };
+    }
+    throw error;
+  }
 
   const processing: IdempotencyRecord = {
     status: 'processing',
@@ -33,21 +48,40 @@ export async function beginIdempotency(params: {
     createdAt: new Date().toISOString(),
   };
 
-  const setResult = await redis.set(
-    key,
-    JSON.stringify(processing),
-    'EX',
-    ttlSeconds,
-    'NX'
-  );
+  let setResult;
+  try {
+    setResult = await redis.set(
+      key,
+      JSON.stringify(processing),
+      'EX',
+      ttlSeconds,
+      'NX'
+    );
+  } catch (error) {
+    // ✅ Redis operation failed - log return 503
+    monitor.redisUnavailable('Redis SET operation', error instanceof Error ? error.message : 'Unknown error');
+    return {
+      type: 'unavailable',
+      message: 'Payment service temporarily unavailable. Please try again later.'
+    };
+  }
 
   if (setResult === 'OK') {
     return { type: 'acquired', key, requestHash };
   }
 
-  const existingRaw = await redis.get(key);
+  let existingRaw;
+  try {
+    existingRaw = await redis.get(key);
+  } catch (error) {
+    monitor.redisUnavailable('Redis GET operation', error instanceof Error ? error.message : 'Unknown error');
+    return {
+      type: 'unavailable',
+      message: 'Payment service temporarily unavailable. Please try again later.'
+    };
+  }
+
   if (!existingRaw) {
-    // Key expired between checks; let caller retry once.
     return { type: 'busy', key, message: 'Idempotency key is not available yet. Please retry.' };
   }
 
@@ -55,7 +89,6 @@ export async function beginIdempotency(params: {
   try {
     existing = JSON.parse(existingRaw) as IdempotencyRecord;
   } catch {
-    // Corrupted value; fail closed.
     return { type: 'conflict', key, message: 'Idempotency key is in an invalid state.' };
   }
 
@@ -78,7 +111,17 @@ export async function completeIdempotency(params: {
   ttlSeconds?: number;
 }): Promise<void> {
   const { key, requestHash, httpStatus, body, ttlSeconds = 60 * 30 } = params;
-  const redis = await getRedisClient();
+  
+  let redis;
+  try {
+    redis = getRedisClient();
+  } catch (error) {
+    // ✅ Redis unavailable 
+    if (error instanceof RedisConnectionError) {
+      monitor.redisUnavailable('idempotency completion', error.message);
+    }
+    return;
+  }
 
   const completed: IdempotencyRecord = {
     status: 'completed',
@@ -87,6 +130,10 @@ export async function completeIdempotency(params: {
     response: { httpStatus, body },
   };
 
-  await redis.set(key, JSON.stringify(completed), 'EX', ttlSeconds);
+  try {
+    await redis.set(key, JSON.stringify(completed), 'EX', ttlSeconds);
+  } catch (error) {
+    monitor.redisUnavailable('idempotency completion SET', error instanceof Error ? error.message : 'Unknown error');
+    
+  }
 }
-

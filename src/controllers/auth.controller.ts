@@ -5,12 +5,11 @@ import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../server';
 import { AppError } from '../utils/errorHandler';
-import { AuthRequest, excludePassword } from '../middlewares/auth';
+import { AuthRequest, excludePassword, invalidateUserCache } from '../middlewares/auth';
 import { logger } from '../utils/logger';
 import { sendVerificationEmail } from '../utils/email';
 import speakeasy from 'speakeasy';
 import QRCode from 'qrcode';
-import { invalidateUserCache } from '../middlewares/auth';
 
 export class AuthController {
   /**
@@ -69,8 +68,6 @@ export class AuthController {
         },
       });
 
-      // ==================== ✅ NEW ADDITIONS ====================
-
       // Generate verification token
       const verificationToken = crypto.randomBytes(32).toString('hex');
 
@@ -78,11 +75,9 @@ export class AuthController {
         await prisma.user.update({
           where: { id: user.id },
           data: {
-            ...(verificationToken && { verificationToken }),
-            ...(verificationToken && {
-              verificationTokenExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000),
-            }),
-          } as any,
+            verificationToken,
+            verificationTokenExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          },
         });
       } catch (err) {
         logger.warn('Failed to store verification token');
@@ -90,17 +85,13 @@ export class AuthController {
 
       // Send email OR fallback to log
       try {
-        // If you have email utility later, plug it here
         await sendVerificationEmail(email, verificationToken);
-
         logger.info(`Verification token for ${email}: ${verificationToken}`);
       } catch (err) {
         logger.error('Failed to send verification email:', err);
       }
 
-      // ==================== END ADDITIONS ====================
-
-      // Generate tokens (UNCHANGED)
+      // Generate tokens
       const token = this.generateToken(user.id);
       const refreshToken = this.generateRefreshToken(user.id);
 
@@ -128,7 +119,6 @@ export class AuthController {
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
-      // Response (no tokens in response)
       res.status(201).json({
         success: true,
         message: 'Registration successful',
@@ -149,6 +139,7 @@ export class AuthController {
       next(error);
     }
   }
+
   async verifyEmail(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
@@ -160,12 +151,11 @@ export class AuthController {
         return next(new AppError('Invalid verification token', 400));
       }
 
-      // 🔍 Find user with matching token AND valid expiry
       const user = await prisma.user.findFirst({
         where: {
           verificationToken: token,
           verificationTokenExpiry: {
-            gt: new Date(), // token not expired
+            gt: new Date(),
           },
         },
       });
@@ -174,7 +164,6 @@ export class AuthController {
         return next(new AppError('Invalid or expired token', 400));
       }
 
-      // ✅ Mark user as verified + clean up token
       await prisma.user.update({
         where: { id: user.id },
         data: {
@@ -184,7 +173,6 @@ export class AuthController {
         },
       });
 
-      // (Optional but good) log activity
       await this.logActivity(user.id, 'EMAIL_VERIFIED', req);
 
       res.json({
@@ -196,6 +184,7 @@ export class AuthController {
       next(error);
     }
   }
+
   async validateResetToken(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const token = typeof req.query.token === 'string' ? req.query.token : undefined;
@@ -207,7 +196,7 @@ export class AuthController {
         where: {
           resetToken: token,
           resetTokenExpiry: { gt: new Date() },
-        } as Prisma.UserWhereInput,
+        },
         select: { id: true },
       });
 
@@ -219,6 +208,7 @@ export class AuthController {
       next(error);
     }
   }
+
   /**
    * Login user
    */
@@ -264,7 +254,14 @@ export class AuthController {
         return next(new AppError('Please verify your email first', 403));
       }
 
-      // ✅ 🔐 2FA CHECK (IMPORTANT FIX)
+
+      // ✅ Check if user is active
+      if (user.isActive === false) {
+      await this.logActivity(user.id, 'LOGIN_FAILED_SUSPENDED', req);
+      return next(new AppError('Account is suspended or inactive', 403));
+      }
+      
+      // 2FA CHECK
       if (user.twoFactorEnabled) {
         res.status(200).json({
           success: true,
@@ -321,6 +318,7 @@ export class AuthController {
       next(error);
     }
   }
+
   async setup2FA(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) {
@@ -466,6 +464,9 @@ export class AuthController {
         },
       });
 
+      // ✅ Invalidate cache on 2FA disable (security event)
+      await invalidateUserCache(user.id);
+
       res.json({ success: true, message: '2FA disabled successfully' });
     } catch (error) {
       next(error);
@@ -500,7 +501,6 @@ export class AuthController {
         return next(new AppError('Invalid 2FA code', 400));
       }
 
-      // ✅ ENABLE 2FA if first time
       if (!user.twoFactorEnabled) {
         await prisma.user.update({
           where: { id: user.id },
@@ -514,7 +514,6 @@ export class AuthController {
         return;
       }
 
-      // ✅ COMPLETE LOGIN AFTER 2FA
       const accessToken = this.generateToken(user.id);
       const refreshToken = this.generateRefreshToken(user.id);
 
@@ -550,12 +549,12 @@ export class AuthController {
       next(error);
     }
   }
+
   /**
    * Refresh access token
    */
   async refreshToken(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      // Try to get refresh token from httpOnly cookie or fallback to request body
       const refreshTokenFromCookie = req.cookies?.refreshToken;
       const refreshTokenFromBody = req.body?.refreshToken;
       const refreshToken = refreshTokenFromCookie || refreshTokenFromBody;
@@ -564,7 +563,6 @@ export class AuthController {
         return next(new AppError('Refresh token is required', 400));
       }
 
-      // Find valid session
       const session = await prisma.session.findFirst({
         where: {
           token: refreshToken,
@@ -577,11 +575,9 @@ export class AuthController {
         return next(new AppError('Invalid or expired refresh token', 401));
       }
 
-      // Generate new tokens
       const token = this.generateToken(session.user.id);
       const newRefreshToken = this.generateRefreshToken(session.user.id);
 
-      // Replace old session with new one
       await prisma.$transaction([
         prisma.session.delete({ where: { id: session.id } }),
         prisma.session.create({
@@ -593,7 +589,6 @@ export class AuthController {
         }),
       ]);
 
-      // Set both cookies as httpOnly
       res.cookie('token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
@@ -610,53 +605,55 @@ export class AuthController {
 
       res.json({
         success: true,
-        data: {}, // No need to return tokens in response
+        data: {},
       });
     } catch (error) {
       next(error);
     }
   }
 
- /**
- * Logout user
- */
-async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-  try {
-    const token = req.token;
-    const userId = req.user?.id;
-    const refreshToken = req.cookies?.refreshToken;
+  /**
+   * Logout user - ✅ Invalidate cache on logout
+   */
+  async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const token = req.token;
+      const userId = req.user?.id;
+      const refreshToken = req.cookies?.refreshToken;
 
-    if (!token) {
-      return next(new AppError('No token provided', 401));
+      if (!token) {
+        return next(new AppError('No token provided', 401));
+      }
+
+      // ✅ Invalidate user cache in Redis on logout
+      if (userId) {
+        await invalidateUserCache(userId);
+        console.log(`🗑️ Cache invalidated for user ${userId} on logout`);
+      }
+
+      // Delete access token session
+      await prisma.session.deleteMany({ where: { token } });
+
+      // Delete refresh token session (if exists)
+      if (refreshToken) {
+        await prisma.session.deleteMany({ where: { token: refreshToken } });
+      }
+
+      // Clear both cookies
+      res.clearCookie('token');
+      res.clearCookie('refreshToken');
+
+      // Log activity
+      if (req.user) {
+        await this.logActivity(req.user.id, 'LOGOUT', req);
+      }
+
+      res.json({ success: true, message: 'Logout successful' });
+    } catch (error) {
+      next(error);
     }
-
-    // Invalidate user cache in Redis
-    if (userId) {
-      await invalidateUserCache(userId);
-    }
-
-    // Delete access token session
-    await prisma.session.deleteMany({ where: { token } });
-
-    // Delete refresh token session (if exists)
-    if (refreshToken) {
-      await prisma.session.deleteMany({ where: { token: refreshToken } });
-    }
-
-    // Clear both cookies
-    res.clearCookie('token');
-    res.clearCookie('refreshToken');
-
-    // Log activity
-    if (req.user) {
-      await this.logActivity(req.user.id, 'LOGOUT', req);
-    }
-
-    res.json({ success: true, message: 'Logout successful' });
-  } catch (error) {
-    next(error);
   }
-}
+
   /**
    * Get current authenticated user
    */
@@ -673,7 +670,7 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
   }
 
   /**
-   * Change user password
+   * Change user password - ✅ Invalidate cache on password change
    */
   async changePassword(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -687,8 +684,6 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         return next(new AppError('Current password and new password are required', 400));
       }
 
-      // Re-fetch the password hash only where it is needed — it is intentionally
-      // absent from req.user (UserWithRelations) for security.
       const userWithPassword = await prisma.user.findUnique({
         where: { id: req.user.id },
         select: { password: true },
@@ -698,13 +693,11 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         return next(new AppError('User not found', 404));
       }
 
-      // Verify current password
       const isValid = await bcrypt.compare(currentPassword, userWithPassword.password);
       if (!isValid) {
         return next(new AppError('Current password is incorrect', 400));
       }
 
-      // Hash and update new password
       const hashedPassword = await bcrypt.hash(newPassword, 12);
       await prisma.user.update({
         where: { id: req.user.id },
@@ -714,6 +707,10 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         },
       });
 
+      // ✅ Invalidate cache on password change (security event)
+      await invalidateUserCache(req.user.id);
+      console.log(`🗑️ Cache invalidated for user ${req.user.id} on password change`);
+
       // Log activity
       await this.logActivity(req.user.id, 'PASSWORD_CHANGE', req);
 
@@ -722,6 +719,7 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
       next(error);
     }
   }
+
   /**
    * Request password reset
    */
@@ -733,7 +731,6 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         return next(new AppError('Email is required', 400));
       }
 
-      // Find user
       const user = await prisma.user.findUnique({
         where: { email },
         select: {
@@ -743,10 +740,8 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         }
       });
 
-      // Log attempt
       await this.logActivity(user?.id || null, 'FORGOT_PASSWORD_ATTEMPT', req);
 
-      // Always return same message for security
       const message = 'If your email is registered, you will receive a reset link';
 
       if (!user) {
@@ -754,14 +749,13 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         return;
       }
 
-      // Check for rate limiting - prevent multiple requests in short time
       const recentReset = await prisma.user.findFirst({
         where: {
           id: user.id,
           resetTokenExpiry: {
-            gt: new Date(Date.now() - 5 * 60 * 1000), // Last 5 minutes
+            gt: new Date(Date.now() - 5 * 60 * 1000),
           },
-        } as Prisma.UserWhereInput,
+        },
       });
 
       if (recentReset?.resetTokenExpiry) {
@@ -770,27 +764,22 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         return;
       }
 
-      // Generate reset token
       const resetToken = crypto.randomBytes(32).toString('hex');
-      const resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      const resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000);
 
-      // Store token in database
       await prisma.user.update({
         where: { id: user.id },
         data: {
           resetToken,
           resetTokenExpiry,
-        } as Prisma.UserUpdateInput,
+        },
       });
 
-      // Send reset email
       try {
         await sendVerificationEmail(user.email, resetToken, 'RESET', user.firstName || undefined);
         logger.info(`Password reset email sent to ${user.email}`);
       } catch (emailError) {
         logger.error('Failed to send reset email:', emailError);
-
-        // In development, still show the token in logs
         if (process.env.NODE_ENV === 'development') {
           console.log(`\n⚠️ Email sending failed. Reset token for ${user.email}: ${resetToken}\n`);
         }
@@ -810,7 +799,6 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
     try {
       const { token, password } = req.body;
 
-      // Validation
       if (!token || !password) {
         return next(new AppError('Token and password are required', 400));
       }
@@ -819,20 +807,18 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         return next(new AppError('Password must be at least 8 characters', 400));
       }
 
-      // Validate password strength
       const passwordValidation = this.validatePasswordStrength(password);
       if (!passwordValidation.isValid) {
         return next(new AppError(passwordValidation.message, 400));
       }
 
-      // Find user with valid token
       const user = await prisma.user.findFirst({
         where: {
           resetToken: token,
           resetTokenExpiry: {
-            gt: new Date(), // Token not expired
+            gt: new Date(),
           },
-        } as Prisma.UserWhereInput,
+        },
       });
 
       if (!user) {
@@ -840,19 +826,15 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         return next(new AppError('Invalid or expired reset token', 400));
       }
 
-      // Prevent multiple rapid resets
       if (user.passwordResetAt &&
         user.passwordResetAt > new Date(Date.now() - 5 * 60 * 1000)) {
         await this.logActivity(user.id, 'PASSWORD_RESET_RAPID_ATTEMPT', req);
         return next(new AppError('Please wait before trying again', 429));
       }
 
-      // Hash new password
       const hashedPassword = await bcrypt.hash(password, 12);
 
-      // Use transaction to ensure data consistency
       await prisma.$transaction(async (tx) => {
-        // Update user password and clear reset token
         await tx.user.update({
           where: { id: user.id },
           data: {
@@ -861,15 +843,17 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
             passwordResetAt: new Date(),
             resetToken: null,
             resetTokenExpiry: null,
-          } as Prisma.UserUpdateInput,
+          },
         });
 
-        // Invalidate all existing sessions for security
+        // ✅ Invalidate cache on password reset
+        await invalidateUserCache(user.id);
+        console.log(`🗑️ Cache invalidated for user ${user.id} on password reset`);
+
         await tx.session.deleteMany({
           where: { userId: user.id },
         });
 
-        // Log the successful reset
         await tx.activityLog.create({
           data: {
             userId: user.id,
@@ -883,7 +867,6 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         });
       });
 
-      // Send confirmation email (optional, don't block on failure)
       try {
         await sendVerificationEmail(user.email, '', 'RESET_CONFIRMATION', user.firstName || undefined);
       } catch (emailError) {
@@ -985,9 +968,10 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
       { expiresIn } as jwt.SignOptions
     );
   }
+
   /**
- * Resend verification email
- */
+   * Resend verification email
+   */
   async resendVerification(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { email } = req.body;
@@ -1008,7 +992,6 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         return next(new AppError('Email already verified', 400));
       }
 
-      // Generate new verification token
       const verificationToken = crypto.randomBytes(32).toString('hex');
       const verificationTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
@@ -1020,7 +1003,6 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         },
       });
 
-      // Send verification email
       await sendVerificationEmail(user.email, verificationToken, 'VERIFICATION', user.firstName || undefined);
 
       res.json({
@@ -1032,6 +1014,7 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
       next(error);
     }
   }
+
   async verify2FABackupCode(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { userId, backupCode } = req.body;
@@ -1189,12 +1172,10 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
           },
           admin: true,
         },
-        // Exclude sensitive fields
       });
 
       if (!user) return next(new AppError('User not found', 404));
 
-      // Strip password and security tokens
       const {
         password, twoFactorSecret, twoFactorBackupCodes,
         verificationToken, verificationTokenExpiry,
@@ -1210,7 +1191,7 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
 
   /**
    * PUT /api/auth/profile
-   * Update basic user info (name, phone, profileImage). Password via /change-password.
+   * Update basic user info (name, phone, profileImage)
    */
   async updateProfile(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -1218,7 +1199,6 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
 
       const { firstName, lastName, phone, profileImage } = req.body;
 
-      // If phone is being changed, check uniqueness
       if (phone && phone !== req.user.phone) {
         const taken = await prisma.user.findFirst({
           where: { phone, NOT: { id: req.user.id } },
@@ -1241,6 +1221,9 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
         },
       });
 
+      // ✅ Invalidate cache on profile update
+      await invalidateUserCache(req.user.id);
+
       await this.logActivity(req.user.id, 'PROFILE_UPDATE', req);
 
       res.json({ success: true, data: { user: updated } });
@@ -1248,10 +1231,4 @@ async logout(req: AuthRequest, res: Response, next: NextFunction): Promise<void>
       next(error);
     }
   }
-
-  // ==================== HELPER METHODS ====================
-
-  /**
-   * Log activity to database
-   */
 }

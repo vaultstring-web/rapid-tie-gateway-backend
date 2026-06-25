@@ -108,7 +108,7 @@ export const getReconciliationExceptions = async (req: Request, res: Response): 
     const [missingProviderRef, inconsistentFailed] = await Promise.all([
       prisma.transaction.findMany({
         where: {
-          status: 'success',
+          status: 'SUCCESS',
           createdAt: { gte: since },
           OR: [{ providerRef: null }, { providerRef: '' }],
         },
@@ -117,7 +117,7 @@ export const getReconciliationExceptions = async (req: Request, res: Response): 
       }),
       prisma.transaction.findMany({
         where: {
-          status: 'failed',
+          status: 'FAILED',
           createdAt: { gte: since },
           NOT: [{ providerRef: null }, { providerRef: '' }],
         },

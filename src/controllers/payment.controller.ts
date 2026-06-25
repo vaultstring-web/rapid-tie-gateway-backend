@@ -1,4 +1,3 @@
-// controllers/payment.controller.ts
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middlewares/auth';
 import { paymentService } from '../services/payment.service';
@@ -64,6 +63,16 @@ export const initiatePayment = async (req: AuthRequest, res: Response): Promise<
         requestHash,
         ttlSeconds: 60 * 30,
       });
+
+      // ✅ NEW: Handle Redis unavailable - return 503
+      if (idem.type === 'unavailable') {
+        res.status(503).json({
+          success: false,
+          message: idem.message,
+          error: 'SERVICE_UNAVAILABLE'
+        });
+        return;
+      }
 
       if (idem.type === 'replay') {
         res.setHeader('Idempotency-Replayed', 'true');
@@ -132,8 +141,9 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
     const { provider } = req.params;
     const webhookData = req.body;
 
-    // Verify webhook signature here based on provider
-    // This is critical for security
+    // NOTE: Webhook signature verification is handled by provider-specific middleware
+    // (e.g., verifyPaynowSignature, verifyAirtelSignature) applied at the route level.
+    // Do NOT duplicate signature checks here.
 
     const transactionRef = webhookData.transactionRef || webhookData.reference;
     const status = webhookData.status === 'success' ? 'success' : 'failed';
