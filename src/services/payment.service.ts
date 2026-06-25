@@ -18,6 +18,7 @@ export interface WebhookData {
   status: 'success' | 'failed' | 'pending';
   providerRef: string;
   amount: number;
+  currency?: string;
   metadata?: Record<string, any>;
 }
 
@@ -226,7 +227,7 @@ class PaymentService {
 }
 
   async handleWebhook(webhookData: WebhookData) {
-    const { transactionRef, status, providerRef, metadata } = webhookData;
+    const { transactionRef, status, providerRef,currency, metadata } = webhookData;
 
     const transaction = await prisma.transaction.findUnique({
       where: { transactionRef },
@@ -245,6 +246,7 @@ class PaymentService {
         data: {
           status: 'SUCCESS',
           providerRef,
+           ...(currency && { currency }),
           metadata: { ...(transaction.metadata as any || {}), webhook: metadata }
         }
       });
