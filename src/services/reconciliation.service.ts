@@ -25,7 +25,7 @@ export class ReconciliationService {
       where: {
         provider,
         createdAt: { gte: startDate, lt: endDate },
-        status: 'success',
+        status: 'SUCCESS',
       },
       select: {
         id: true,
@@ -36,7 +36,7 @@ export class ReconciliationService {
     });
 
     // Simulate fetching from provider API
-    const providerTransactions = await this.fetchProviderTransactions(provider, startDate, endDate);
+    const providerTransactions = await this.fetchProviderTransactions();
 
     // Match transactions by providerRef
     const matched: string[] = [];
@@ -57,7 +57,9 @@ export class ReconciliationService {
             providerAmount: providerMatch.amount,
           });
         }
-        matched.push(internal.providerRef);
+        if (internal.providerRef) {
+          matched.push(internal.providerRef);
+        }
       } else {
         discrepancies.push({
           type: 'missing_in_provider',
@@ -89,7 +91,7 @@ export class ReconciliationService {
     // This query uses @@index([status, createdAt])
     const pendingSettlements = await prisma.settlement.findMany({
       where: {
-        status: 'pending',
+        status: 'PENDING',
         createdAt: { lt: cutoffDate },
       },
       orderBy: { createdAt: 'asc' },
@@ -109,7 +111,7 @@ export class ReconciliationService {
     const summary = await prisma.transaction.aggregate({
       where: {
         merchantId,
-        status: 'success',
+        status: 'SUCCESS',
         createdAt: { gte: startDate },
       },
       _sum: {
@@ -134,7 +136,7 @@ export class ReconciliationService {
     const summary = await prisma.transaction.aggregate({
       where: {
         organizerId,
-        status: 'success',
+        status: 'SUCCESS',
         createdAt: { gte: startDate },
       },
       _sum: {
@@ -149,7 +151,7 @@ export class ReconciliationService {
   }
 
   // Simulate fetching from provider API
-  private async fetchProviderTransactions(provider: string, startDate: Date, endDate: Date) {
+  private async fetchProviderTransactions() {
     // Mock implementation - replace with actual API call
     return [
       {

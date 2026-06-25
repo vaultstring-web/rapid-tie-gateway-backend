@@ -37,6 +37,9 @@ export interface AuthRequest extends Request {
   token?: string;
 }
 
+// Configuration
+const CACHE_TTL_SECONDS = 15; // Reduced from 60 to 15 seconds for sensitive routes
+
 // Helper to exclude password from user object
 export const excludePassword = (user: any): any => {
   const { password, ...userWithoutPassword } = user;
@@ -48,7 +51,19 @@ const getUserCacheKey = (userId: string): string => {
   return `user:${userId}`;
 };
 
-// EXPORT the functions
+// ✅ Centralized cache invalidation function
+export const invalidateUserCache = async (userId: string): Promise<void> => {
+  try {
+    const redisClient = getRedisClient();
+    const cacheKey = getUserCacheKey(userId);
+    await redisClient.del(cacheKey);
+    console.log(`🗑️ Cache invalidated for user: ${userId}`);
+  } catch (redisError) {
+    console.error('Redis cache invalidation error:', redisError);
+  }
+};
+
+// ✅ EXPORT the authenticate function
 export const authenticate = async (
   req: AuthRequest,
   _res: Response,
@@ -71,6 +86,7 @@ export const authenticate = async (
     const cacheKey = getUserCacheKey(userId);
 
     let user: any = null;
+    let fromCache = false;
 
     // Try to get user from Redis cache
     try {
@@ -79,6 +95,7 @@ export const authenticate = async (
       
       if (cachedUser) {
         user = JSON.parse(cachedUser);
+        fromCache = true;
         console.log(`✅ Cache hit for user: ${userId}`);
       }
     } catch (redisError) {
@@ -103,16 +120,36 @@ export const authenticate = async (
         return next(new AppError('User not found', 401));
       }
 
-      // Cache the user object (without password) for 60 seconds
+      // Cache the user object (without password) for CACHE_TTL_SECONDS
       try {
         const redisClient = getRedisClient();
         const userToCache = excludePassword(user);
-        await redisClient.setex(cacheKey, 60, JSON.stringify(userToCache));
-        console.log(`📦 Cached user: ${userId} for 60 seconds`);
+        await redisClient.setex(cacheKey, CACHE_TTL_SECONDS, JSON.stringify(userToCache));
+        console.log(`📦 Cached user: ${userId} for ${CACHE_TTL_SECONDS} seconds`);
       } catch (redisError) {
         // Redis error - log but don't fail the request
         console.error('Redis cache set error:', redisError);
       }
+    }
+
+    // ✅ CRITICAL CHECK: Verify user is active (even if from cache)
+    if (user.isActive === false) {
+  // invalidate cache for inactive user
+  if (fromCache) {
+    await invalidateUserCache(userId);
+    console.log(`🔒 User ${userId} is suspended - cache invalidated`);
+    }
+  return next(new AppError('Account is suspended or inactive', 403));
+    }
+
+    // ✅ Check if user is email verified
+    if (user.isEmailVerified === false) {
+      return next(new AppError('Email not verified', 403));
+    }
+
+    // ✅ Check if user is phone verified (if required)
+    if (user.isPhoneVerified === false && process.env.REQUIRE_PHONE_VERIFICATION === 'true') {
+      return next(new AppError('Phone not verified', 403));
     }
 
     req.user = user as UserWithRelations;
@@ -140,16 +177,4 @@ export const authorize = (...roles: string[]) => {
 
     next();
   };
-};
-
-// Helper function to invalidate user cache on logout
-export const invalidateUserCache = async (userId: string): Promise<void> => {
-  try {
-    const redisClient = getRedisClient();
-    const cacheKey = getUserCacheKey(userId);
-    await redisClient.del(cacheKey);
-    console.log(`🗑️ Cache invalidated for user: ${userId}`);
-  } catch (redisError) {
-    console.error('Redis cache invalidation error:', redisError);
-  }
 };

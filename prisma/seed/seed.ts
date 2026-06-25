@@ -670,7 +670,7 @@ async function main() {
         totalAmount: 40000,
         feeAmount: 1200,
         netAmount: 38800,
-        status: 'completed',
+        status: 'COMPLETED',
         paymentMethod: 'airtel_money',
         transactionId: 'cmnrhgoey0009rcyj0wko2eq7',
       },
@@ -717,7 +717,7 @@ async function main() {
         totalAmount: 20000,
         feeAmount: 600,
         netAmount: 19400,
-        status: 'completed',
+        status: 'COMPLETED',
         paymentMethod: 'airtel_money',
       },
     });
@@ -749,7 +749,7 @@ async function main() {
         totalAmount: 40000,
         feeAmount: 1200,
         netAmount: 38800,
-        status: 'completed',
+        status: 'COMPLETED',
         paymentMethod: 'airtel_money',
       },
     });
@@ -795,7 +795,7 @@ async function main() {
         totalAmount: 20000,
         feeAmount: 600,
         netAmount: 19400,
-        status: 'completed',
+        status: 'COMPLETED',
         paymentMethod: 'airtel_money',
       },
     });
@@ -827,7 +827,7 @@ async function main() {
         totalAmount: 40000,
         feeAmount: 1200,
         netAmount: 38800,
-        status: 'completed',
+        status: 'COMPLETED',
         paymentMethod: 'airtel_money',
       },
     });
@@ -869,7 +869,7 @@ async function main() {
         fee: 1200,
         netAmount: 38800,
         currency: 'MWK',
-        status: 'success',
+        status: 'SUCCESS',
         paymentMethod: 'airtel_money',
         provider: 'airtel',
         providerRef: 'AIR-1775739522195',

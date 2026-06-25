@@ -40,8 +40,8 @@ export const getTransactionStats = async (req: Request, res: Response): Promise<
       prisma.transaction.count({ where: { createdAt: { gte: today } } }),
       prisma.transaction.count({ where: { createdAt: { gte: thisWeek } } }),
       prisma.transaction.count({ where: { createdAt: { gte: thisMonth } } }),
-      prisma.transaction.count({ where: { status: 'pending' } }),
-      prisma.transaction.count({ where: { status: 'failed' } }),
+      prisma.transaction.count({ where: { status: 'PENDING' } }),
+      prisma.transaction.count({ where: { status: 'FAILED' } }),
       prisma.transaction.groupBy({
         by: ['paymentMethod'],
         _count: true,
@@ -111,7 +111,7 @@ export const getSuspiciousTransactions = async (req: Request, res: Response): Pr
     const suspicious = await prisma.transaction.findMany({
       where: {
         OR: [
-          { status: 'failed' },
+          { status: 'FAILED' },
           { amount: { gt: 1000000 } }, // Large transactions
         ],
       },
@@ -135,7 +135,7 @@ export const getSuspiciousTransactions = async (req: Request, res: Response): Pr
         createdAt: t.createdAt,
         merchant: t.merchant?.businessName,
         organizer: t.organizer?.organizationName,
-        reason: t.status === 'failed' ? 'Failed transaction' : 'High value transaction',
+        reason: t.status === 'FAILED' ? 'Failed transaction' : 'High value transaction',
       })),
     });
   } catch (error) {
@@ -204,7 +204,7 @@ export const refundTransaction = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    if (transaction.status !== 'success') {
+    if (transaction.status !== 'SUCCESS') {
       res.status(400).json({ success: false, message: 'Only successful transactions can be refunded' });
       return;
     }
@@ -223,7 +223,7 @@ export const refundTransaction = async (req: Request, res: Response): Promise<vo
 
     await prisma.transaction.update({
       where: { id },
-      data: { status: 'refunded' },
+      data: { status: 'REFUNDED' },
     });
 
     // Broadcast refund event to WebSocket
@@ -242,7 +242,7 @@ export const refundTransaction = async (req: Request, res: Response): Promise<vo
         userId: user.id,
         transactionId: transaction.id,
         action: 'MANUAL_REFUND',
-        status: 'success',
+        status: 'SUCCESS',
         details: { refundAmount, reason, refundedBy: user.email },
         ipAddress: req.ip,
       },
@@ -283,7 +283,7 @@ export const markTransactionAsFailed = async (req: Request, res: Response): Prom
       return;
     }
 
-    if (transaction.status !== 'pending') {
+    if (transaction.status !== 'PENDING') {
       res.status(400).json({ success: false, message: 'Only pending transactions can be marked as failed' });
       return;
     }
@@ -291,7 +291,7 @@ export const markTransactionAsFailed = async (req: Request, res: Response): Prom
     const updated = await prisma.transaction.update({
       where: { id },
       data: {
-        status: 'failed',
+        status: 'FAILED',
         metadata: { ...(transaction.metadata as any), failedReason: reason, failedBy: user.email },
       },
     });
@@ -311,7 +311,7 @@ export const markTransactionAsFailed = async (req: Request, res: Response): Prom
         userId: user.id,
         transactionId: transaction.id,
         action: 'MANUAL_FAIL',
-        status: 'success',
+        status: 'FAILED',
         details: { reason, failedBy: user.email },
         ipAddress: req.ip,
       },
@@ -352,7 +352,7 @@ export const approveTransaction = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    if (transaction.status !== 'pending') {
+    if (transaction.status !== 'PENDING') {
       res.status(400).json({ success: false, message: 'Only pending transactions can be approved' });
       return;
     }
@@ -360,7 +360,7 @@ export const approveTransaction = async (req: Request, res: Response): Promise<v
     const updated = await prisma.transaction.update({
       where: { id },
       data: {
-        status: 'success',
+        status: 'SUCCESS',
         metadata: { ...(transaction.metadata as any), approvedBy: user.email, approvalNotes: notes },
       },
     });
@@ -379,7 +379,7 @@ export const approveTransaction = async (req: Request, res: Response): Promise<v
         userId: user.id,
         transactionId: transaction.id,
         action: 'MANUAL_APPROVE',
-        status: 'success',
+        status: 'SUCCESS',
         details: { approvedBy: user.email, notes },
         ipAddress: req.ip,
       },

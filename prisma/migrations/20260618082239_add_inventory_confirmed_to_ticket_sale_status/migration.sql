@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "TicketSaleStatus" ADD VALUE 'INVENTORY_CONFIRMED';

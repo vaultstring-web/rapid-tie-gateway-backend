@@ -1,13 +1,26 @@
-// src/services/settlementQueue.service.ts
-import { Queue } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
 import { prisma } from '../server';
 import { logger } from '../utils/logger';
+import { notifyQueueFailure, notifyQueueConnectionFailure } from '../utils/alerting';
+
+// Redis connection configuration
+const redisConfig = {
+  host: process.env.REDIS_HOST || 'localhost',
+  port: parseInt(process.env.REDIS_PORT || '6379'),
+  password: process.env.REDIS_PASSWORD || undefined,
+};
 
 // Settlement queue configuration
 const settlementQueue = new Queue('settlement', {
-  connection: {
-    host: process.env.REDIS_HOST || 'localhost',
-    port: parseInt(process.env.REDIS_PORT || '6379'),
+  connection: redisConfig,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 5000, // 5 seconds initial delay
+    },
+    removeOnComplete: 100,
+    removeOnFail: 100,
   },
 });
 
@@ -18,6 +31,9 @@ interface SettlementJobData {
   requestedBy?: string;
 }
 
+/**
+ * Process settlement job
+ */
 async function processSettlement(data: SettlementJobData) {
   const { periodStart, periodEnd, entity } = data;
   const start = new Date(periodStart);
@@ -37,11 +53,10 @@ async function processSettlement(data: SettlementJobData) {
     });
 
     for (const merchant of merchants) {
-      // This query will use @@index([merchantId, status, createdAt]) index
       const agg = await prisma.transaction.aggregate({
         where: {
           merchantId: merchant.id,
-          status: 'success',
+          status: 'SUCCESS',
           createdAt: { gte: start, lt: end },
         },
         _sum: { amount: true, fee: true, netAmount: true },
@@ -63,7 +78,7 @@ async function processSettlement(data: SettlementJobData) {
           feeAmount: agg._sum.fee || 0,
           netAmount: agg._sum.netAmount || 0,
           transactionCount,
-          status: 'pending',
+          status: 'PENDING',
         },
       });
 
@@ -78,11 +93,10 @@ async function processSettlement(data: SettlementJobData) {
     });
 
     for (const organizer of organizers) {
-      // This query will use @@index([organizerId, status, createdAt]) index
       const agg = await prisma.transaction.aggregate({
         where: {
           organizerId: organizer.id,
-          status: 'success',
+          status: 'SUCCESS',
           createdAt: { gte: start, lt: end },
         },
         _sum: { amount: true, fee: true, netAmount: true },
@@ -104,7 +118,7 @@ async function processSettlement(data: SettlementJobData) {
           feeAmount: agg._sum.fee || 0,
           netAmount: agg._sum.netAmount || 0,
           transactionCount,
-          status: 'pending',
+          status: 'PENDING',
         },
       });
 
@@ -116,10 +130,57 @@ async function processSettlement(data: SettlementJobData) {
   return { success: true, createdCount: created.length };
 }
 
-// Process settlement jobs
-settlementQueue.process(async (job) => {
+// ✅ Register worker with error handlers
+const worker = new Worker('settlement', async (job) => {
   const data = job.data as SettlementJobData;
   return await processSettlement(data);
+}, {
+  connection: redisConfig,
+  concurrency: 1,
 });
 
-export { settlementQueue, processSettlement };
+// ✅ Failed event handler - logs job data, error stack, attempts
+worker.on('failed', async (job, error) => {
+  if (!job) return;
+  
+  const attemptsMade = job.attemptsMade || 0;
+  const maxAttempts = job.opts?.attempts || 3;
+  
+  // Only notify on final attempt failure
+  if (attemptsMade >= maxAttempts) {
+    await notifyQueueFailure(
+      'settlement',
+      job.id!,
+      error,
+      attemptsMade,
+      job.data
+    );
+  } else {
+    // Log but don't alert for retries
+    logger.warn(`⚠️ Settlement job ${job.id} failed, retry ${attemptsMade}/${maxAttempts}: ${error.message}`);
+  }
+});
+
+// ✅ Completed event handler for monitoring
+worker.on('completed', (job) => {
+  logger.info(`✅ Settlement job ${job.id} completed successfully`);
+});
+
+// ✅ Error event handler for queue connection failures
+worker.on('error', async (error) => {
+  await notifyQueueConnectionFailure('settlement', error);
+});
+
+// Queue-level error handler
+settlementQueue.on('error', async (error) => {
+  await notifyQueueConnectionFailure('settlement (queue)', error);
+});
+
+// ✅ Graceful shutdown
+process.on('SIGTERM', async () => {
+  await worker.close();
+  await settlementQueue.close();
+  logger.info('Settlement worker and queue closed');
+});
+
+export { settlementQueue, processSettlement, worker };
