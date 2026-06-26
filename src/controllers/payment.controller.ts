@@ -1,3 +1,4 @@
+// src/controllers/payment.controller.ts
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middlewares/auth';
 import { paymentService } from '../services/payment.service';
@@ -34,6 +35,7 @@ export const initiatePayment = async (req: AuthRequest, res: Response): Promise<
       return;
     }
 
+    // ✅ Note: Validation is already handled by middleware, but keep this as fallback
     if (!sessionToken || !paymentMethod) {
       const body = {
         success: false,
