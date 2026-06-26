@@ -1,8 +1,10 @@
+// src/controllers/payment.controller.ts
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middlewares/auth';
 import { paymentService } from '../services/payment.service';
 import { prisma } from '../server';
 import { beginIdempotency, completeIdempotency, hashRequestBody } from '../services/idempotency.service';
+import { webhookSchema } from '../validators/payment.validators';
 
 export const initiatePayment = async (req: AuthRequest, res: Response): Promise<void> => {
   const idempotencyKey = req.header('Idempotency-Key') || req.header('Idempotency-key');
@@ -23,6 +25,7 @@ export const initiatePayment = async (req: AuthRequest, res: Response): Promise<
       return;
     }
 
+    // ✅ Note: Validation is already handled by middleware, but keep this as fallback
     if (!sessionToken || !paymentMethod) {
       const body = {
         success: false,
@@ -64,7 +67,7 @@ export const initiatePayment = async (req: AuthRequest, res: Response): Promise<
         ttlSeconds: 60 * 30,
       });
 
-      // ✅ NEW: Handle Redis unavailable - return 503
+      // Handle Redis unavailable - return 503
       if (idem.type === 'unavailable') {
         res.status(503).json({
           success: false,
@@ -141,27 +144,44 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
     const { provider } = req.params;
     const webhookData = req.body;
 
-    // NOTE: Webhook signature verification is handled by provider-specific middleware
-    // (e.g., verifyPaynowSignature, verifyAirtelSignature) applied at the route level.
-    // Do NOT duplicate signature checks here.
+    // ✅ Validate webhook data using Zod schema
+    const validatedData = webhookSchema.parse({ body: webhookData });
 
-    const transactionRef = webhookData.transactionRef || webhookData.reference;
-    const status = webhookData.status === 'success' ? 'success' : 'failed';
-    const providerRef = webhookData.providerRef || webhookData.transactionId;
-    const amount = webhookData.amount;
+    // Extract validated data
+    const { 
+      transactionRef, 
+      status, 
+      providerRef, 
+      amount, 
+      currency,
+      metadata 
+    } = validatedData.body;
 
+    // Use validated data for processing
     const result = await paymentService.handleWebhook({
       transactionRef,
       status,
-      providerRef,
+      providerRef: providerRef || '',
       amount,
-      metadata: { provider, rawData: webhookData }
+      currency: currency || 'MWK',
+      metadata: { provider, rawData: webhookData, ...metadata }
     });
 
     res.status(200).json({ success: true, data: result });
     return;
   } catch (error: any) {
     console.error('Webhook error:', error);
+    
+    // Handle validation errors
+    if (error.name === 'ZodError') {
+      res.status(400).json({ 
+        success: false, 
+        message: 'Invalid webhook payload',
+        errors: error.errors 
+      });
+      return;
+    }
+    
     res.status(500).json({ success: false, message: error.message });
     return;
   }
@@ -181,13 +201,7 @@ export const getPaymentStatus = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
-    if (!sessionToken) {
-      res.status(400).json({
-        success: false,
-        message: 'Session token is required'
-      });
-      return;
-    }
+    // ✅ Note: sessionToken validation is handled by middleware
 
     const paymentSession = await prisma.paymentSession.findUnique({
       where: { sessionToken },
