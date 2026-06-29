@@ -61,6 +61,13 @@ class PaymentService {
     const transactionRef = `TXN-${Date.now()}-${uuidv4().slice(0, 8)}`;
     const providerImpl = resolveProvider({ paymentMethod, provider });
 
+    const merchant = await prisma.merchant.findUnique({
+      where: { userId: paymentSession.event.organizer.userId },
+      select: { feePercentage: true }
+    });
+    const feePercentage = merchant?.feePercentage ?? 3.0;
+    const feeRate = feePercentage / 100;
+
     try {
       const amount = paymentSession.totalAmount;
       const paymentResult = await providerImpl.initiate({
@@ -77,8 +84,8 @@ class PaymentService {
           data: {
             transactionRef,
             amount: paymentSession.totalAmount,
-            fee: paymentSession.totalAmount * 0.03,
-            netAmount: paymentSession.totalAmount * 0.97,
+            fee: paymentSession.totalAmount * feeRate,
+            netAmount: paymentSession.totalAmount * (1 - feeRate),
             currency: paymentSession.currency,
             status: 'SUCCESS',
             paymentMethod,
@@ -89,7 +96,8 @@ class PaymentService {
               sessionToken,
               eventId: paymentSession.eventId,
               tierId: paymentSession.tierId,
-              quantity: paymentSession.quantity
+              quantity: paymentSession.quantity,
+              appliedFeePercentage: feePercentage
             }
             
           }
