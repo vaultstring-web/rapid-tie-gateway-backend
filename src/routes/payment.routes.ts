@@ -6,6 +6,8 @@ import {
   initiatePaymentSchema, 
   getPaymentStatusSchema 
 } from '../validators/payment.validators';
+import { paymentInitiateLimiter } from '../middlewares/rateLimiter';
+
 
 const router: Router = Router();
 
@@ -17,6 +19,7 @@ router.get('/test', (_req, res) => {
 router.post(
   '/initiate', 
   authenticate, 
+  paymentInitiateLimiter, 
   validate(initiatePaymentSchema), 
   initiatePayment
 );
