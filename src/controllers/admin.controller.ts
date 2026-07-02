@@ -4,10 +4,10 @@ import { prisma } from '../server';
 import { Prisma } from '@prisma/client';
 import os from 'os';
 import { invalidateUserCache } from '../middlewares/auth';
+import { cacheService } from '../services/cache.service';
 
-// Cache for admin metrics
-const metricsCache = new Map<string, { data: any; expiresAt: number }>();
-const CACHE_DURATION = 60 * 1000; // 1 minute
+// const metricsCache = new Map<string, { data: any; expiresAt: number }>();
+// const CACHE_DURATION = 60 * 1000; // 1 minute
 
 // Get system health metrics
 async function getSystemHealth() {
@@ -287,6 +287,7 @@ function getTimeAgo(date: Date): string {
   return 'just now';
 }
 
+// ✅ Updated with Redis cache
 export const getAdminDashboard = async (req: Request, res: Response): Promise<void> => {
   try {
     const user = (req as any).user;
@@ -295,10 +296,11 @@ export const getAdminDashboard = async (req: Request, res: Response): Promise<vo
       return;
     }
     
-    const cacheKey = 'admin_dashboard';
-    const cached = metricsCache.get(cacheKey);
+    const cacheKey = 'admin:dashboard:metrics';
     
-    if (cached && cached.expiresAt > Date.now()) {
+    // ✅ Try Redis cache first
+    const cached = await cacheService.get<{ data: any; timestamp: string }>(cacheKey);
+    if (cached) {
       res.status(200).json({ success: true, data: cached.data, cached: true });
       return;
     }
@@ -318,7 +320,8 @@ export const getAdminDashboard = async (req: Request, res: Response): Promise<vo
       activity: recentActivity,
     };
     
-    metricsCache.set(cacheKey, { data: dashboardData, expiresAt: Date.now() + CACHE_DURATION });
+    // ✅ Store in Redis cache (60 seconds TTL)
+    await cacheService.set(cacheKey, { data: dashboardData, timestamp: new Date().toISOString() }, 60);
     
     res.status(200).json({ success: true, data: dashboardData, cached: false });
   } catch (error) {
@@ -327,6 +330,7 @@ export const getAdminDashboard = async (req: Request, res: Response): Promise<vo
   }
 };
 
+// ✅ Updated with Redis cache clear
 export const clearAdminCache = async (req: Request, res: Response): Promise<void> => {
   try {
     const user = (req as any).user;
@@ -335,7 +339,10 @@ export const clearAdminCache = async (req: Request, res: Response): Promise<void
       return;
     }
     
-    metricsCache.clear();
+    // ✅ Clear all admin cache by prefix
+    const cleared = await cacheService.clearByPrefix('admin');
+    console.log(`🗑️ Admin cache cleared: ${cleared} keys removed`);
+    
     res.status(200).json({ success: true, message: 'Admin dashboard cache cleared' });
   } catch (error) {
     console.error('Clear admin cache error:', error);
@@ -782,7 +789,6 @@ export const getEmployeeById = async (req: Request, res: Response): Promise<void
     res.status(500).json({ success: false, message: 'Failed to fetch employee' });
   }
 };
-
 
 export const deleteEmployee = async (req: Request, res: Response): Promise<void> => {
   try {

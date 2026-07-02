@@ -1,4 +1,3 @@
-// controllers/admin/jobManagement.controller.ts
 import { Request, Response } from 'express';
 import { 
   emailQueue, 
@@ -8,10 +7,7 @@ import {
   cleanupQueue,
   scheduleRecurringJobs,
 } from '../../services/jobQueue.service';
-
-// Cache for job metrics
-const jobCache = new Map<string, { data: any; expiresAt: number }>();
-const CACHE_DURATION = 5 * 1000; // 5 seconds
+import { cacheService } from '../../services/cache.service';
 
 // Get all job queues status
 export const getAllJobQueues = async (req: Request, res: Response): Promise<void> => {
@@ -25,10 +21,11 @@ export const getAllJobQueues = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    const cacheKey = 'job_queues';
-    const cached = jobCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      res.status(200).json({ success: true, data: cached.data, cached: true });
+    const cacheKey = 'admin:jobs:queues';
+    
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({ success: true, data: cached, cached: true });
       return;
     }
 
@@ -62,7 +59,7 @@ export const getAllJobQueues = async (req: Request, res: Response): Promise<void
       queues,
     };
 
-    jobCache.set(cacheKey, { data: response, expiresAt: Date.now() + CACHE_DURATION });
+    await cacheService.set(cacheKey, response, 5);
 
     res.status(200).json({ success: true, data: response, cached: false });
   } catch (error) {
@@ -112,6 +109,14 @@ export const getFailedJobs = async (req: Request, res: Response): Promise<void> 
         return;
     }
 
+    const cacheKey = `admin:jobs:failed:${queueName}:page=${page}:limit=${limit}`;
+    
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({ success: true, data: cached, cached: true });
+      return;
+    }
+
     const failedJobs = await queue.getFailed();
     const start = (page - 1) * limit;
     const paginatedJobs = failedJobs.slice(start, start + limit);
@@ -128,17 +133,22 @@ export const getFailedJobs = async (req: Request, res: Response): Promise<void> 
       finishedOn: job.finishedOn,
     }));
 
+    const response = {
+      jobs: formattedJobs,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(failedJobs.length / limit),
+        totalItems: failedJobs.length,
+        itemsPerPage: limit,
+      },
+    };
+
+    await cacheService.set(cacheKey, response, 5);
+
     res.status(200).json({
       success: true,
-      data: {
-        jobs: formattedJobs,
-        pagination: {
-          currentPage: page,
-          totalPages: Math.ceil(failedJobs.length / limit),
-          totalItems: failedJobs.length,
-          itemsPerPage: limit,
-        },
-      },
+      data: response,
+      cached: false,
     });
   } catch (error) {
     console.error('Get failed jobs error:', error);
@@ -146,7 +156,7 @@ export const getFailedJobs = async (req: Request, res: Response): Promise<void> 
   }
 };
 
-// Get job details (using query param)
+// Get job details
 export const getJobDetails = async (req: Request, res: Response): Promise<void> => {
   try {
     const user = (req as any).user;
@@ -178,6 +188,14 @@ export const getJobDetails = async (req: Request, res: Response): Promise<void> 
         return;
     }
 
+    const cacheKey = `admin:jobs:detail:${queueName}:${jobId}`;
+    
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({ success: true, data: cached, cached: true });
+      return;
+    }
+
     const job = await queue.getJob(jobId as string);
     if (!job) {
       res.status(404).json({ success: false, message: 'Job not found' });
@@ -188,23 +206,28 @@ export const getJobDetails = async (req: Request, res: Response): Promise<void> 
     const progress = job.progress();
     const logs = await job.logs();
 
+    const response = {
+      id: job.id,
+      name: job.name,
+      data: job.data,
+      opts: job.opts,
+      attempts: job.attemptsMade,
+      failedReason: job.failedReason,
+      stacktrace: job.stacktrace,
+      timestamp: job.timestamp,
+      processedOn: job.processedOn,
+      finishedOn: job.finishedOn,
+      state,
+      progress,
+      logs: logs.slice(-50),
+    };
+
+    await cacheService.set(cacheKey, response, 10);
+
     res.status(200).json({
       success: true,
-      data: {
-        id: job.id,
-        name: job.name,
-        data: job.data,
-        opts: job.opts,
-        attempts: job.attemptsMade,
-        failedReason: job.failedReason,
-        stacktrace: job.stacktrace,
-        timestamp: job.timestamp,
-        processedOn: job.processedOn,
-        finishedOn: job.finishedOn,
-        state,
-        progress,
-        logs: logs.slice(-50),
-      },
+      data: response,
+      cached: false,
     });
   } catch (error) {
     console.error('Get job details error:', error);
@@ -212,7 +235,7 @@ export const getJobDetails = async (req: Request, res: Response): Promise<void> 
   }
 };
 
-// Retry a failed job (using query param)
+// Retry a failed job
 export const retryJob = async (req: Request, res: Response): Promise<void> => {
   try {
     const user = (req as any).user;
@@ -252,7 +275,7 @@ export const retryJob = async (req: Request, res: Response): Promise<void> => {
 
     await job.retry();
     
-    jobCache.clear();
+    await cacheService.clearByPrefix('admin:jobs');
 
     res.status(200).json({
       success: true,
@@ -298,7 +321,7 @@ export const retryAllFailedJobs = async (req: Request, res: Response): Promise<v
       retriedCount++;
     }
     
-    jobCache.clear();
+    await cacheService.clearByPrefix('admin:jobs');
 
     res.status(200).json({
       success: true,
@@ -311,7 +334,7 @@ export const retryAllFailedJobs = async (req: Request, res: Response): Promise<v
   }
 };
 
-// Cancel a job (using query param)
+// Cancel a job
 export const cancelJob = async (req: Request, res: Response): Promise<void> => {
   try {
     const user = (req as any).user;
@@ -351,7 +374,7 @@ export const cancelJob = async (req: Request, res: Response): Promise<void> => {
 
     await job.remove();
     
-    jobCache.clear();
+    await cacheService.clearByPrefix('admin:jobs');
 
     res.status(200).json({
       success: true,
@@ -391,7 +414,7 @@ export const clearQueue = async (req: Request, res: Response): Promise<void> => 
 
     await queue.empty();
     
-    jobCache.clear();
+    await cacheService.clearByPrefix('admin:jobs');
 
     res.status(200).json({
       success: true,
@@ -439,6 +462,8 @@ export const scheduleRecurringJob = async (req: Request, res: Response): Promise
       jobId: name || `${jobType}_recurring_${Date.now()}`,
     });
 
+    await cacheService.clearByPrefix('admin:jobs');
+
     res.status(201).json({
       success: true,
       message: `Recurring job scheduled`,
@@ -455,31 +480,6 @@ export const initializeRecurringJobs = async () => {
   await scheduleRecurringJobs();
 };
 
-// Clear job cache
-export const clearJobCache = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const user = (req as any).user;
-    if (!user || user.role !== 'ADMIN') {
-      res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin privileges required.',
-      });
-      return;
-    }
-
-    jobCache.clear();
-    res.status(200).json({
-      success: true,
-      message: 'Job cache cleared',
-    });
-  } catch (error) {
-    console.error('Clear job cache error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to clear cache',
-    });
-  }
-};
 // Add an immediate job
 export const addImmediateJob = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -516,6 +516,8 @@ export const addImmediateJob = async (req: Request, res: Response): Promise<void
       removeOnComplete: true,
     });
 
+    await cacheService.clearByPrefix('admin:jobs');
+
     res.status(201).json({
       success: true,
       message: `Immediate job added to ${jobType} queue`,
@@ -524,5 +526,33 @@ export const addImmediateJob = async (req: Request, res: Response): Promise<void
   } catch (error) {
     console.error('Add immediate job error:', error);
     res.status(500).json({ success: false, message: 'Failed to add job' });
+  }
+};
+
+// Clear job cache
+export const clearJobCache = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = (req as any).user;
+    if (!user || user.role !== 'ADMIN') {
+      res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin privileges required.',
+      });
+      return;
+    }
+
+    const cleared = await cacheService.clearByPrefix('admin:jobs');
+    console.log(`🗑️ Job cache cleared: ${cleared} keys removed`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Job cache cleared',
+    });
+  } catch (error) {
+    console.error('Clear job cache error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to clear cache',
+    });
   }
 };
