@@ -6,6 +6,7 @@ import {
   initiatePaymentSchema, 
   getPaymentStatusSchema 
 } from '../validators/payment.validators';
+import { paymentInitiateLimiter } from '../middlewares/rateLimiter';
 
 const router: Router = Router();
 
@@ -13,10 +14,11 @@ router.get('/test', (_req, res) => {
   res.json({ message: 'Payment route working!' });
 });
 
-// ✅ Add validation to initiate payment
+// rate limiter + validation to initiate payment
 router.post(
   '/initiate', 
-  authenticate, 
+  authenticate,
+  paymentInitiateLimiter,
   validate(initiatePaymentSchema), 
   initiatePayment
 );
@@ -24,7 +26,7 @@ router.post(
 // Webhook endpoint for payment providers (validation handled in controller)
 router.post('/webhook/:provider', handlePaymentWebhook);
 
-// ✅ Add validation to get payment status
+// validation to get payment status
 router.get(
   '/status/:sessionToken', 
   authenticate, 

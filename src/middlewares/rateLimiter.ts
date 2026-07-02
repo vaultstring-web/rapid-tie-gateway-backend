@@ -10,6 +10,7 @@ export const loginRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
 export const forgotPasswordLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 3,
@@ -19,4 +20,29 @@ export const forgotPasswordLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+});
+
+export const paymentInitiateLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 5, // 5 requests per minute
+  keyGenerator: (req) => {
+    // Use user ID if authenticated, otherwise IP address
+    const userId = (req as any).user?.id;
+    if (userId) {
+      return `payment:user:${userId}`;
+    }
+    // Fallback to IP if not authenticated (shouldn't happen for this route)
+    const ip = req.ip || req.headers['x-forwarded-for'] as string || 'unknown';
+    return `payment:ip:${ip}`;
+  },
+  message: {
+    success: false,
+    message: 'Too many payment initiation attempts. Please wait a moment before trying again.',
+    error: 'RATE_LIMIT_EXCEEDED',
+    retryAfter: '60 seconds',
+  },
+  standardHeaders: true, // Send RateLimit-* headers
+  legacyHeaders: false,
+  skipFailedRequests: false, // Count failed requests too
+  skipSuccessfulRequests: false, // Count successful requests too
 });
