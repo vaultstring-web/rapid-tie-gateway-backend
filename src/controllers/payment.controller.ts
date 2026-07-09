@@ -8,7 +8,17 @@ import { webhookSchema } from '../validators/payment.validators';
 
 export const initiatePayment = async (req: AuthRequest, res: Response): Promise<void> => {
   const idempotencyKey = req.header('Idempotency-Key') || req.header('Idempotency-key');
-  const requestHash = idempotencyKey ? hashRequestBody(req.body) : '';
+  
+  if (!idempotencyKey) {
+    res.status(400).json({
+      success: false,
+      message: 'Idempotency-Key header is required for payment initiation',
+      error: 'MISSING_IDEMPOTENCY_KEY'
+    });
+    return;
+  }
+
+  const requestHash = hashRequestBody(req.body);
   let idemKey: string | null = null;
 
   try {
@@ -59,41 +69,40 @@ export const initiatePayment = async (req: AuthRequest, res: Response): Promise<
       return;
     }
 
-    if (idempotencyKey) {
-      const idem = await beginIdempotency({
-        namespace: 'payments:initiate',
-        idempotencyKey,
-        requestHash,
-        ttlSeconds: 60 * 30,
+    // ✅ process idempotency 
+    const idem = await beginIdempotency({
+      namespace: 'payments:initiate',
+      idempotencyKey,
+      requestHash,
+      ttlSeconds: 60 * 30,
+    });
+
+    // Handle Redis unavailable - return 503
+    if (idem.type === 'unavailable') {
+      res.status(503).json({
+        success: false,
+        message: idem.message,
+        error: 'SERVICE_UNAVAILABLE'
       });
-
-      // Handle Redis unavailable - return 503
-      if (idem.type === 'unavailable') {
-        res.status(503).json({
-          success: false,
-          message: idem.message,
-          error: 'SERVICE_UNAVAILABLE'
-        });
-        return;
-      }
-
-      if (idem.type === 'replay') {
-        res.setHeader('Idempotency-Replayed', 'true');
-        res.status(idem.httpStatus).json(idem.body);
-        return;
-      }
-      if (idem.type === 'busy') {
-        res.setHeader('Retry-After', '1');
-        res.status(409).json({ success: false, message: idem.message });
-        return;
-      }
-      if (idem.type === 'conflict') {
-        res.status(409).json({ success: false, message: idem.message });
-        return;
-      }
-
-      idemKey = idem.key;
+      return;
     }
+
+    if (idem.type === 'replay') {
+      res.setHeader('Idempotency-Replayed', 'true');
+      res.status(idem.httpStatus).json(idem.body);
+      return;
+    }
+    if (idem.type === 'busy') {
+      res.setHeader('Retry-After', '1');
+      res.status(409).json({ success: false, message: idem.message });
+      return;
+    }
+    if (idem.type === 'conflict') {
+      res.status(409).json({ success: false, message: idem.message });
+      return;
+    }
+
+    idemKey = idem.key;
 
     const result = await paymentService.initiatePayment({
       sessionToken,
