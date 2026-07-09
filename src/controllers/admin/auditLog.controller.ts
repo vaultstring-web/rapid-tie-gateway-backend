@@ -1,11 +1,7 @@
-// controllers/admin/auditLog.controller.ts
 import { Request, Response } from 'express';
 import { prisma } from '../../server';
 import { verifyAuditIntegrity as verifyAuditIntegrityService } from '../../services/auditLog.service';
-
-// Cache for audit logs
-const auditCache = new Map<string, { data: any; expiresAt: number }>();
-const CACHE_DURATION = 30 * 1000; // 30 seconds
+import { cacheService } from '../../services/cache.service';
 
 // Get audit logs with filtering and pagination
 export const getAuditLogs = async (req: Request, res: Response): Promise<void> => {
@@ -30,6 +26,19 @@ export const getAuditLogs = async (req: Request, res: Response): Promise<void> =
     const search = req.query.search as string;
     
     const skip = (page - 1) * limit;
+
+    const cacheKey = `admin:audit:logs:page=${page}:limit=${limit}:action=${action || 'all'}:entityType=${entityType || 'all'}:userId=${userId || 'none'}:status=${status || 'all'}:search=${search || 'none'}`;
+    
+    // Try Redis cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({
+        success: true,
+        data: cached,
+        cached: true,
+      });
+      return;
+    }
 
     // Build filter conditions
     const whereCondition: any = {};
@@ -140,12 +149,8 @@ export const getAuditLogs = async (req: Request, res: Response): Promise<void> =
       },
     };
 
-    // Cache the response
-    const cacheKey = `audit_logs_${page}_${limit}_${action}_${entityType}_${userId}_${status}_${search}`;
-    auditCache.set(cacheKey, {
-      data: response,
-      expiresAt: Date.now() + CACHE_DURATION,
-    });
+    // Store in Redis cache (30 seconds TTL)
+    await cacheService.set(cacheKey, response, 30);
 
     res.status(200).json({
       success: true,
@@ -174,6 +179,18 @@ export const getEventAuditLogs = async (req: Request, res: Response): Promise<vo
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 50;
     const skip = (page - 1) * limit;
+
+    const cacheKey = `admin:audit:event:${eventId}:page=${page}:limit=${limit}`;
+    
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({
+        success: true,
+        data: cached,
+        cached: true,
+      });
+      return;
+    }
 
     const logs = await prisma.auditLog.findMany({
       where: {
@@ -205,17 +222,22 @@ export const getEventAuditLogs = async (req: Request, res: Response): Promise<vo
       },
     });
 
+    const response = {
+      logs,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(totalCount / limit),
+        totalItems: totalCount,
+        itemsPerPage: limit,
+      },
+    };
+
+    await cacheService.set(cacheKey, response, 30);
+
     res.status(200).json({
       success: true,
-      data: {
-        logs,
-        pagination: {
-          currentPage: page,
-          totalPages: Math.ceil(totalCount / limit),
-          totalItems: totalCount,
-          itemsPerPage: limit,
-        },
-      },
+      data: response,
+      cached: false,
     });
   } catch (error) {
     console.error('Get event audit logs error:', error);
@@ -223,7 +245,7 @@ export const getEventAuditLogs = async (req: Request, res: Response): Promise<vo
   }
 };
 
-// Verify audit integrity - Fixed: renamed to avoid conflict and added proper parameters
+// Verify audit integrity
 export const checkAuditIntegrity = async (req: Request, res: Response): Promise<void> => {
   try {
     const user = (req as any).user;
@@ -235,7 +257,6 @@ export const checkAuditIntegrity = async (req: Request, res: Response): Promise<
       return;
     }
 
-    // Call the service function which expects 0 arguments
     const result = await verifyAuditIntegrityService();
 
     res.status(200).json({
@@ -285,7 +306,6 @@ export const exportAuditLogs = async (req: Request, res: Response): Promise<void
     });
 
     if (format === 'csv') {
-      // Generate CSV
       const headers = ['ID', 'Action', 'Status', 'Entity Type', 'Entity ID', 'User', 'IP Address', 'Timestamp', 'Details'];
       const csvRows = [headers];
       
@@ -333,6 +353,18 @@ export const getAuditStats = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
+    const cacheKey = 'admin:audit:stats';
+    
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({
+        success: true,
+        data: cached,
+        cached: true,
+      });
+      return;
+    }
+
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const thisWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -376,19 +408,24 @@ export const getAuditStats = async (req: Request, res: Response): Promise<void> 
       })
     );
 
+    const response = {
+      summary: {
+        total,
+        today: todayCount,
+        week: weekCount,
+        month: monthCount,
+      },
+      topActions: byAction.map(a => ({ action: a.action, count: a._count })),
+      topUsers,
+      byEntityType: byEntityType.map(e => ({ entityType: e.entityType || 'Unknown', count: e._count })),
+    };
+
+    await cacheService.set(cacheKey, response, 60);
+
     res.status(200).json({
       success: true,
-      data: {
-        summary: {
-          total,
-          today: todayCount,
-          week: weekCount,
-          month: monthCount,
-        },
-        topActions: byAction.map(a => ({ action: a.action, count: a._count })),
-        topUsers,
-        byEntityType: byEntityType.map(e => ({ entityType: e.entityType || 'Unknown', count: e._count })),
-      },
+      data: response,
+      cached: false,
     });
   } catch (error) {
     console.error('Get audit stats error:', error);
@@ -408,7 +445,9 @@ export const clearAuditCache = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    auditCache.clear();
+    const cleared = await cacheService.clearByPrefix('admin:audit');
+    console.log(`🗑️ Audit cache cleared: ${cleared} keys removed`);
+
     res.status(200).json({
       success: true,
       message: 'Audit cache cleared',

@@ -2,15 +2,13 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../server';
 import { TransactionStatus } from '@prisma/client';
+import { cacheService } from '../../services/cache.service';
 
-// Cache for merchant list
-const merchantCache = new Map<string, { data: any; expiresAt: number }>();
-const CACHE_DURATION = 60 * 1000; // 1 minute
+// ==================== MERCHANT MANAGEMENT ====================
 
 // Get all merchants with pagination and filters
 export const getAllMerchants = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Check if user is admin
     const user = (req as any).user;
     if (!user || user.role !== 'ADMIN') {
       res.status(403).json({
@@ -26,6 +24,20 @@ export const getAllMerchants = async (req: Request, res: Response): Promise<void
     const search = req.query.search as string;
     
     const skip = (page - 1) * limit;
+
+    // Build cache key based on query parameters
+    const cacheKey = `admin:merchants:list:page=${page}:limit=${limit}:status=${status || 'all'}:search=${search || 'none'}`;
+    
+    // Try Redis cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({
+        success: true,
+        data: cached,
+        cached: true,
+      });
+      return;
+    }
 
     // Build filter conditions
     const whereCondition: any = {};
@@ -74,7 +86,6 @@ export const getAllMerchants = async (req: Request, res: Response): Promise<void
     // Calculate stats for each merchant
     const merchantsWithStats = [];
     for (const merchant of merchants) {
-      // Get events separately (since Merchant doesn't have direct events relation)
       const events = await prisma.event.findMany({
         where: { organizer: { userId: merchant.userId } },
         include: {
@@ -89,7 +100,6 @@ export const getAllMerchants = async (req: Request, res: Response): Promise<void
       const paymentLinks = (merchant as any).paymentLinks || [];
       const settlements = (merchant as any).settlements || [];
       
-      // Total revenue from transactions
       let totalRevenue = 0;
       let totalFees = 0;
       for (const t of transactions) {
@@ -97,7 +107,6 @@ export const getAllMerchants = async (req: Request, res: Response): Promise<void
         totalFees += (t?.amount || 0) * 0.03;
       }
       
-      // Calculate event stats
       let publishedEvents = 0;
       let completedEvents = 0;
       let totalTicketsSold = 0;
@@ -114,7 +123,6 @@ export const getAllMerchants = async (req: Request, res: Response): Promise<void
         }
       }
       
-      // Calculate product stats
       let activeProducts = 0;
       let totalInventory = 0;
       for (const product of products) {
@@ -122,7 +130,6 @@ export const getAllMerchants = async (req: Request, res: Response): Promise<void
         totalInventory += product.inventory || 0;
       }
       
-      // Calculate payment link stats
       let activeLinks = 0;
       let totalViews = 0;
       let totalConversions = 0;
@@ -132,7 +139,6 @@ export const getAllMerchants = async (req: Request, res: Response): Promise<void
         totalConversions += link.conversions || 0;
       }
       
-      // Calculate settlement stats
       let completedSettlements = 0;
       let settlementAmount = 0;
       for (const settlement of settlements) {
@@ -211,12 +217,8 @@ export const getAllMerchants = async (req: Request, res: Response): Promise<void
       },
     };
 
-    // Cache the response
-    const cacheKey = `merchants_${page}_${limit}_${status || 'all'}_${search || 'none'}`;
-    merchantCache.set(cacheKey, {
-      data: response,
-      expiresAt: Date.now() + CACHE_DURATION,
-    });
+    // Store in Redis cache (60 seconds TTL)
+    await cacheService.set(cacheKey, response, 60);
 
     res.status(200).json({
       success: true,
@@ -245,6 +247,19 @@ export const getMerchantById = async (req: Request, res: Response): Promise<void
     }
 
     const { id } = req.params;
+
+    const cacheKey = `admin:merchants:detail:${id}`;
+    
+    // Try Redis cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({
+        success: true,
+        data: cached,
+        cached: true,
+      });
+      return;
+    }
 
     const merchant = await prisma.merchant.findUnique({
       where: { id },
@@ -288,7 +303,6 @@ export const getMerchantById = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    // Get events separately
     const events = await prisma.event.findMany({
       where: { organizer: { userId: merchant.userId } },
       include: {
@@ -302,7 +316,6 @@ export const getMerchantById = async (req: Request, res: Response): Promise<void
     const products = (merchant as any).products || [];
     const apiKeys = (merchant as any).apiKeys || [];
     
-    // Calculate detailed stats
     let totalRevenue = 0;
     let totalFees = 0;
     for (const t of transactions) {
@@ -312,7 +325,6 @@ export const getMerchantById = async (req: Request, res: Response): Promise<void
     
     const monthlyRevenue = await getMerchantMonthlyRevenue(merchant.id);
     
-    // Calculate event stats
     let publishedEvents = 0;
     let completedEvents = 0;
     let totalTicketsSold = 0;
@@ -329,13 +341,11 @@ export const getMerchantById = async (req: Request, res: Response): Promise<void
       }
     }
     
-    // Calculate product stats
     let activeProducts = 0;
     for (const product of products) {
       if (product.active === true) activeProducts++;
     }
     
-    // Calculate API key stats
     let activeApiKeys = 0;
     for (const key of apiKeys) {
       if (!key.expiresAt || new Date(key.expiresAt) > new Date()) activeApiKeys++;
@@ -384,9 +394,13 @@ export const getMerchantById = async (req: Request, res: Response): Promise<void
       webhooks: merchant.webhooks,
     };
 
+    // Store in Redis cache (120 seconds TTL)
+    await cacheService.set(cacheKey, response, 120);
+
     res.status(200).json({
       success: true,
       data: response,
+      cached: false,
     });
   } catch (error) {
     console.error('Get merchant by ID error:', error);
@@ -441,6 +455,19 @@ export const getApprovalQueue = async (req: Request, res: Response): Promise<voi
       return;
     }
 
+    const cacheKey = 'admin:merchants:approval-queue';
+    
+    // Try Redis cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({
+        success: true,
+        data: cached,
+        cached: true,
+      });
+      return;
+    }
+
     const pendingMerchants = await prisma.merchant.findMany({
       where: { status: 'PENDING' },
       include: {
@@ -475,13 +502,19 @@ export const getApprovalQueue = async (req: Request, res: Response): Promise<voi
       orderBy: { createdAt: 'asc' },
     });
 
+    const response = {
+      merchants: pendingMerchants,
+      organizers: pendingOrganizers,
+      total: pendingMerchants.length + pendingOrganizers.length,
+    };
+
+    // Store in Redis cache (30 seconds TTL)
+    await cacheService.set(cacheKey, response, 30);
+
     res.status(200).json({
       success: true,
-      data: {
-        merchants: pendingMerchants,
-        organizers: pendingOrganizers,
-        total: pendingMerchants.length + pendingOrganizers.length,
-      },
+      data: response,
+      cached: false,
     });
   } catch (error) {
     console.error('Get approval queue error:', error);
@@ -525,8 +558,8 @@ export const approveMerchant = async (req: Request, res: Response): Promise<void
       },
     });
 
-    // Clear cache
-    merchantCache.clear();
+    // Clear Redis cache
+    await cacheService.clearByPrefix('admin:merchants');
 
     res.status(200).json({
       success: true,
@@ -576,7 +609,6 @@ export const suspendMerchant = async (req: Request, res: Response): Promise<void
       },
     });
 
-    // Log the suspension
     await prisma.activityLog.create({
       data: {
         userId: user.id,
@@ -587,8 +619,8 @@ export const suspendMerchant = async (req: Request, res: Response): Promise<void
       },
     });
 
-    // Clear cache
-    merchantCache.clear();
+    // Clear Redis cache
+    await cacheService.clearByPrefix('admin:merchants');
 
     res.status(200).json({
       success: true,
@@ -637,7 +669,6 @@ export const activateMerchant = async (req: Request, res: Response): Promise<voi
       },
     });
 
-    // Log the activation
     await prisma.activityLog.create({
       data: {
         userId: user.id,
@@ -648,8 +679,8 @@ export const activateMerchant = async (req: Request, res: Response): Promise<voi
       },
     });
 
-    // Clear cache
-    merchantCache.clear();
+    // Clear Redis cache
+    await cacheService.clearByPrefix('admin:merchants');
 
     res.status(200).json({
       success: true,
@@ -701,8 +732,8 @@ export const updateMerchantSettings = async (req: Request, res: Response): Promi
       },
     });
 
-    // Clear cache
-    merchantCache.clear();
+    // Clear Redis cache
+    await cacheService.clearByPrefix('admin:merchants');
 
     res.status(200).json({
       success: true,
@@ -730,7 +761,10 @@ export const clearMerchantCache = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    merchantCache.clear();
+    // Clear all merchant cache by prefix
+    const cleared = await cacheService.clearByPrefix('admin:merchants');
+    console.log(`🗑️ Merchant cache cleared: ${cleared} keys removed`);
+
     res.status(200).json({
       success: true,
       message: 'Merchant cache cleared',

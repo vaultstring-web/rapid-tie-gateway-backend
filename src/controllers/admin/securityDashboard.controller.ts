@@ -1,9 +1,10 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../server';
+import { cacheService } from '../../services/cache.service';
 
 // Cache for security metrics
-const securityCache = new Map<string, { data: any; expiresAt: number }>();
-const CACHE_DURATION = 60 * 1000; // 1 minute
+//const securityCache = new Map<string, { data: any; expiresAt: number }>();
+//const CACHE_DURATION = 60 * 1000; // 1 minute
 
 // Failed login attempts tracking (in-memory for demo)
 const failedLoginAttempts = new Map<string, { count: number; lastAttempt: Date; ipAddress: string }>();
@@ -45,10 +46,12 @@ export const getSecurityDashboard = async (req: Request, res: Response): Promise
       return;
     }
 
-    const cacheKey = 'security_dashboard';
-    const cached = securityCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      res.status(200).json({ success: true, data: cached.data, cached: true });
+    const cacheKey = 'admin:security:dashboard';
+    
+    // ✅ Try Redis cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({ success: true, data: cached, cached: true });
       return;
     }
 
@@ -93,7 +96,8 @@ export const getSecurityDashboard = async (req: Request, res: Response): Promise
       recommendations: generateRecommendations(failedLoginStats, suspiciousIPs, twoFAStats, securityScan),
     };
 
-    securityCache.set(cacheKey, { data: response, expiresAt: Date.now() + CACHE_DURATION });
+    // ✅ Store in Redis cache (60 seconds TTL)
+    await cacheService.set(cacheKey, response, 60);
 
     res.status(200).json({ success: true, data: response, cached: false });
   } catch (error) {
@@ -524,7 +528,10 @@ export const clearSecurityCache = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    securityCache.clear();
+    // ✅ Clear all security cache by prefix
+    const cleared = await cacheService.clearByPrefix('admin:security');
+    console.log(`🗑️ Security cache cleared: ${cleared} keys removed`);
+
     res.status(200).json({
       success: true,
       message: 'Security cache cleared',
@@ -537,7 +544,6 @@ export const clearSecurityCache = async (req: Request, res: Response): Promise<v
     });
   }
 };
-
 // Get IP blacklist
 export const getIPBlacklist = async (req: Request, res: Response): Promise<void> => {
   try {

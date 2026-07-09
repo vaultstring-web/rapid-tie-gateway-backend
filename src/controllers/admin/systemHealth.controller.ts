@@ -3,10 +3,11 @@ import { Request, Response } from 'express';
 import { prisma } from '../../server';
 import os from 'os';
 import fs from 'fs';
+import { cacheService } from '../../services/cache.service';
 
-// Cache for health metrics
-const healthCache = new Map<string, { data: any; expiresAt: number }>();
-const CACHE_DURATION = 30 * 1000; // 30 seconds
+
+// const healthCache = new Map<string, { data: any; expiresAt: number }>();
+// const CACHE_DURATION = 30 * 1000; // 30 seconds
 
 // Check database connection
 async function checkDatabaseHealth(): Promise<{ status: string; latency: number; details?: any }> {
@@ -253,7 +254,6 @@ function formatBytes(bytes: number): string {
 // Check overall system health
 export const getSystemHealth = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Check if user is admin
     const user = (req as any).user;
     if (!user || user.role !== 'ADMIN') {
       res.status(403).json({
@@ -263,13 +263,14 @@ export const getSystemHealth = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    const cacheKey = 'system_health';
-    const cached = healthCache.get(cacheKey);
+    const cacheKey = 'admin:health:system';
     
-    if (cached && cached.expiresAt > Date.now()) {
+    // ✅ Try Redis cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
       res.status(200).json({
         success: true,
-        data: cached.data,
+        data: cached,
         cached: true,
       });
       return;
@@ -308,11 +309,8 @@ export const getSystemHealth = async (req: Request, res: Response): Promise<void
       },
     };
 
-    // Cache the response
-    healthCache.set(cacheKey, {
-      data: healthData,
-      expiresAt: Date.now() + CACHE_DURATION,
-    });
+    // ✅ Store in Redis cache (30 seconds TTL)
+    await cacheService.set(cacheKey, healthData, 30);
 
     res.status(200).json({
       success: true,
@@ -461,7 +459,10 @@ export const clearHealthCache = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    healthCache.clear();
+    // Clear all health cache by prefix
+    const cleared = await cacheService.clearByPrefix('admin:health');
+    console.log(`🗑️ Health cache cleared: ${cleared} keys removed`);
+
     res.status(200).json({
       success: true,
       message: 'Health cache cleared',

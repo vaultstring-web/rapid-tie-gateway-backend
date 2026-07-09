@@ -1,15 +1,15 @@
 // controllers/admin/transactionMonitor.controller.ts
 import { Request, Response } from 'express';
 import { prisma } from '../../server';
+import { cacheService } from '../../services/cache.service';
 
 // Store active WebSocket connections for transaction monitoring
 const activeConnections = new Map<string, any>();
 let transactionHistory: any[] = [];
 const MAX_HISTORY = 100;
 
-// Cache for transaction metrics
-const metricsCache = new Map<string, { data: any; expiresAt: number }>();
-const CACHE_DURATION = 5 * 1000; // 5 seconds
+// const metricsCache = new Map<string, { data: any; expiresAt: number }>();
+// const CACHE_DURATION = 5 * 1000; // 5 seconds
 
 // Get transaction statistics
 export const getTransactionStats = async (req: Request, res: Response): Promise<void> => {
@@ -23,10 +23,12 @@ export const getTransactionStats = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const cacheKey = 'transaction_stats';
-    const cached = metricsCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      res.status(200).json({ success: true, data: cached.data, cached: true });
+    const cacheKey = 'admin:transactions:stats';
+    
+    // ✅ Try Redis cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({ success: true, data: cached, cached: true });
       return;
     }
 
@@ -87,7 +89,8 @@ export const getTransactionStats = async (req: Request, res: Response): Promise<
       })),
     };
 
-    metricsCache.set(cacheKey, { data: response, expiresAt: Date.now() + CACHE_DURATION });
+    // ✅ Store in Redis cache (5 seconds TTL)
+    await cacheService.set(cacheKey, response, 5);
 
     res.status(200).json({ success: true, data: response, cached: false });
   } catch (error) {
@@ -95,7 +98,6 @@ export const getTransactionStats = async (req: Request, res: Response): Promise<
     res.status(500).json({ success: false, message: 'Failed to fetch transaction stats' });
   }
 };
-
 // Get suspicious transactions
 export const getSuspiciousTransactions = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -522,7 +524,10 @@ export const clearTransactionCache = async (req: Request, res: Response): Promis
       return;
     }
 
-    metricsCache.clear();
+    // ✅ Clear all transaction cache by prefix
+    const cleared = await cacheService.clearByPrefix('admin:transactions');
+    console.log(`🗑️ Transaction cache cleared: ${cleared} keys removed`);
+
     res.status(200).json({
       success: true,
       message: 'Transaction cache cleared',

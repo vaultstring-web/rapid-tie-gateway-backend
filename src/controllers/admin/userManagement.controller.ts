@@ -1,15 +1,11 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../server';
 import bcrypt from 'bcrypt';
-
-// Cache for user list
-const userCache = new Map<string, { data: any; expiresAt: number }>();
-const CACHE_DURATION = 60 * 1000; // 1 minute
+import { cacheService } from '../../services/cache.service';
 
 // Get all users with pagination and filters
 export const getAllUsers = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Check if user is admin
     const user = (req as any).user;
     if (!user || user.role !== 'ADMIN') {
       res.status(403).json({
@@ -26,6 +22,20 @@ export const getAllUsers = async (req: Request, res: Response): Promise<void> =>
     const search = req.query.search as string;
     
     const skip = (page - 1) * limit;
+
+    // Build cache key based on query parameters
+    const cacheKey = `admin:users:list:page=${page}:limit=${limit}:role=${role || 'all'}:status=${status || 'all'}:search=${search || 'none'}`;
+    
+    // Try Redis cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({
+        success: true,
+        data: cached,
+        cached: true,
+      });
+      return;
+    }
 
     // Build filter conditions
     const whereCondition: any = {};
@@ -77,7 +87,6 @@ export const getAllUsers = async (req: Request, res: Response): Promise<void> =>
     // Calculate stats for each user
     const usersWithStats = [];
     for (const user of users) {
-      // Get ticket purchases
       const tickets = await prisma.ticket.findMany({
         where: {
           order: {
@@ -91,19 +100,15 @@ export const getAllUsers = async (req: Request, res: Response): Promise<void> =>
         orderBy: { createdAt: 'desc' },
       });
       
-      // Get event attendance history
       const attendedEvents = tickets.filter(t => t.status === 'USED').length;
       const purchasedTickets = tickets.length;
       const totalSpent = tickets.reduce((sum, t) => sum + (t.order?.totalAmount || 0), 0);
       
-      // Get unique events attended
       const uniqueEvents = new Set(tickets.map(t => t.eventId));
       
-      // Get last login
       const lastLogin = user.lastLoginAt;
       const lastSession = user.sessions[0];
       
-      // Get account age
       const accountAge = Math.floor((new Date().getTime() - new Date(user.createdAt).getTime()) / (1000 * 60 * 60 * 24));
       
       usersWithStats.push({
@@ -174,12 +179,8 @@ export const getAllUsers = async (req: Request, res: Response): Promise<void> =>
       },
     };
 
-    // Cache the response
-    const cacheKey = `users_${page}_${limit}_${role || 'all'}_${status || 'all'}_${search || 'none'}`;
-    userCache.set(cacheKey, {
-      data: response,
-      expiresAt: Date.now() + CACHE_DURATION,
-    });
+    // Store in Redis cache (60 seconds TTL)
+    await cacheService.set(cacheKey, response, 60);
 
     res.status(200).json({
       success: true,
@@ -208,6 +209,19 @@ export const getUserById = async (req: Request, res: Response): Promise<void> =>
     }
 
     const { id } = req.params;
+
+    const cacheKey = `admin:users:detail:${id}`;
+    
+    // Try Redis cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      res.status(200).json({
+        success: true,
+        data: cached,
+        cached: true,
+      });
+      return;
+    }
 
     const user = await prisma.user.findUnique({
       where: { id },
@@ -265,7 +279,6 @@ export const getUserById = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    // Get ticket history
     const tickets = await prisma.ticket.findMany({
       where: {
         order: {
@@ -283,7 +296,6 @@ export const getUserById = async (req: Request, res: Response): Promise<void> =>
     const attendedEvents = tickets.filter(t => t.status === 'USED');
     const upcomingEvents = tickets.filter(t => t.event.startDate > new Date() && t.status !== 'USED');
     
-    // Get recent activity
     const recentActivity = await prisma.activityLog.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: 'desc' },
@@ -329,9 +341,13 @@ export const getUserById = async (req: Request, res: Response): Promise<void> =>
       },
     };
 
+    // Store in Redis cache (120 seconds TTL)
+    await cacheService.set(cacheKey, response, 120);
+
     res.status(200).json({
       success: true,
       data: response,
+      cached: false,
     });
   } catch (error) {
     console.error('Get user by ID error:', error);
@@ -398,7 +414,6 @@ export const updateUserRole = async (req: Request, res: Response): Promise<void>
       data: { role },
     });
 
-    // Log the role change
     await prisma.activityLog.create({
       data: {
         userId: admin.id,
@@ -410,8 +425,8 @@ export const updateUserRole = async (req: Request, res: Response): Promise<void>
       },
     });
 
-    // Clear cache
-    userCache.clear();
+    // Clear Redis cache
+    await cacheService.clearByPrefix('admin:users');
 
     res.status(200).json({
       success: true,
@@ -440,7 +455,7 @@ export const toggleAccountStatus = async (req: Request, res: Response): Promise<
     }
 
     const { id } = req.params;
-    const { action } = req.body; // 'activate' or 'suspend'
+    const { action } = req.body;
 
     if (!action || !['activate', 'suspend'].includes(action)) {
       res.status(400).json({
@@ -466,7 +481,6 @@ export const toggleAccountStatus = async (req: Request, res: Response): Promise<
       return;
     }
 
-    // Don't allow suspending the last admin
     if (user.role === 'ADMIN' && action === 'suspend') {
       const adminCount = await prisma.user.count({
         where: { role: 'ADMIN', emailVerified: true },
@@ -482,7 +496,6 @@ export const toggleAccountStatus = async (req: Request, res: Response): Promise<
 
     const isActive = action === 'activate';
     
-    // Update user email verified status
     const updated = await prisma.user.update({
       where: { id },
       data: { 
@@ -490,7 +503,6 @@ export const toggleAccountStatus = async (req: Request, res: Response): Promise<
       },
     });
 
-    // Update related merchant/organizer status if they exist
     if (user.role === 'MERCHANT' && user.merchant) {
       await prisma.merchant.update({
         where: { id: user.merchant.id },
@@ -505,7 +517,6 @@ export const toggleAccountStatus = async (req: Request, res: Response): Promise<
       }).catch(err => console.error('Error updating organizer status:', err));
     }
 
-    // Log the status change
     await prisma.activityLog.create({
       data: {
         userId: admin.id,
@@ -516,8 +527,8 @@ export const toggleAccountStatus = async (req: Request, res: Response): Promise<
       },
     });
 
-    // Clear cache
-    userCache.clear();
+    // Clear Redis cache
+    await cacheService.clearByPrefix('admin:users');
 
     res.status(200).json({
       success: true,
@@ -532,6 +543,7 @@ export const toggleAccountStatus = async (req: Request, res: Response): Promise<
     });
   }
 };
+
 // Reset user password (admin action)
 export const resetUserPassword = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -577,7 +589,6 @@ export const resetUserPassword = async (req: Request, res: Response): Promise<vo
       },
     });
 
-    // Log the password reset
     await prisma.activityLog.create({
       data: {
         userId: admin.id,
@@ -588,8 +599,8 @@ export const resetUserPassword = async (req: Request, res: Response): Promise<vo
       },
     });
 
-    // Clear cache
-    userCache.clear();
+    // Clear Redis cache
+    await cacheService.clearByPrefix('admin:users');
 
     res.status(200).json({
       success: true,
@@ -605,7 +616,6 @@ export const resetUserPassword = async (req: Request, res: Response): Promise<vo
   }
 };
 
-// Delete user
 // Delete user
 export const deleteUser = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -640,7 +650,6 @@ export const deleteUser = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    // Don't allow deleting the last admin
     if (user.role === 'ADMIN') {
       const adminCount = await prisma.user.count({
         where: { role: 'ADMIN' },
@@ -654,7 +663,6 @@ export const deleteUser = async (req: Request, res: Response): Promise<void> => 
       }
     }
 
-    // Don't allow deleting self
     if (user.id === admin.id) {
       res.status(400).json({
         success: false,
@@ -663,24 +671,19 @@ export const deleteUser = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    // Delete related records first to avoid foreign key constraints
     try {
-      // Delete sessions
       await prisma.session.deleteMany({
         where: { userId: user.id },
       });
 
-      // Delete notifications
       await prisma.notification.deleteMany({
         where: { userId: user.id },
       });
 
-      // Delete activity logs
       await prisma.activityLog.deleteMany({
         where: { userId: user.id },
       });
 
-      // Delete networking related records
       await prisma.message.deleteMany({
         where: {
           OR: [
@@ -703,24 +706,19 @@ export const deleteUser = async (req: Request, res: Response): Promise<void> => 
         where: { userId: user.id },
       });
 
-      // Delete communication opt-outs
       await prisma.communicationOptOut.deleteMany({
         where: { userId: user.id },
       });
 
-      // Delete communication recipients
       await prisma.communicationRecipient.deleteMany({
         where: { userId: user.id },
       });
 
-      // Delete notification preferences
       await prisma.notificationPreferences.deleteMany({
         where: { userId: user.id },
       });
 
-      // Delete role-specific records
       if (user.merchant) {
-        // Delete merchant related records
         await prisma.apiKey.deleteMany({
           where: { merchantId: user.merchant.id },
         });
@@ -745,7 +743,6 @@ export const deleteUser = async (req: Request, res: Response): Promise<void> => 
       }
 
       if (user.organizer) {
-        // Delete organizer related records
         await prisma.event.deleteMany({
           where: { organizerId: user.organizer.id },
         });
@@ -801,21 +798,17 @@ export const deleteUser = async (req: Request, res: Response): Promise<void> => 
         });
       }
 
-      // Finally delete the user
       await prisma.user.delete({
         where: { id: user.id },
       });
 
     } catch (deleteError) {
       console.error('Error deleting related records:', deleteError);
-      // If cascade delete fails, try a simpler approach - just delete the user
-      // Prisma might handle cascade if schema has onDelete: Cascade
       await prisma.user.delete({
         where: { id: user.id },
       });
     }
 
-    // Log the deletion
     await prisma.activityLog.create({
       data: {
         userId: admin.id,
@@ -826,8 +819,8 @@ export const deleteUser = async (req: Request, res: Response): Promise<void> => 
       },
     });
 
-    // Clear cache
-    userCache.clear();
+    // Clear Redis cache
+    await cacheService.clearByPrefix('admin:users');
 
     res.status(200).json({
       success: true,
@@ -854,7 +847,10 @@ export const clearUserCache = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    userCache.clear();
+    // Clear all user cache by prefix
+    const cleared = await cacheService.clearByPrefix('admin:users');
+    console.log(`🗑️ User cache cleared: ${cleared} keys removed`);
+
     res.status(200).json({
       success: true,
       message: 'User cache cleared',
@@ -882,10 +878,20 @@ export const getUserAttendanceHistory = async (req: Request, res: Response): Pro
 
     const { id } = req.params;
 
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: { email: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
     const tickets = await prisma.ticket.findMany({
       where: {
         order: {
-          customerEmail: (await prisma.user.findUnique({ where: { id } }))?.email,
+          customerEmail: user.email,
         },
       },
       include: {
