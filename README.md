@@ -188,6 +188,20 @@ Invoke-RestMethod -Uri "http://localhost:3001/api/auth/login" -Method POST -Cont
 
 # Should return success with user data and tokens
 
+## 🐳 Docker Deployment
+
+### Prerequisites
+- Docker and Docker Compose installed
+- Node.js 20+ for local development
+
+### Environment Setup
+
+1. Copy the example environment file:
+   ```bash
+   cp .env.production.example .env.production
+   
+### PROJECT STRUCTURE
+
 📁 PROJECT STRUCTURE
 
 rapid-tie-backend/
