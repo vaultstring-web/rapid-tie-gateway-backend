@@ -82,8 +82,6 @@ app.use(morgan('combined', { stream: { write: (message) => logger.info(message.t
 app.use(express.json({
   limit: '10mb',
   verify: (req, _res, buf) => {
-    // Capture raw body for webhook signature verification.
-    // Safe to store for all JSON requests; only used by webhook routes.
     (req as any).rawBody = buf;
   },
 }));
@@ -130,11 +128,8 @@ app.use('/uploads', express.static('uploads'));
 // Health check
 app.get('/health', (_req: Request, res: Response) => {
   res.json({
-    status: 'OK',
+    status: 'ok',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: process.env.NODE_ENV,
-    project: 'Rapid Tie Payment Gateway',
   });
 });
 
